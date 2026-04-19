@@ -26,7 +26,7 @@ SKILL_DESCRIPTIONS = {
     "Dungeoneering":  "Improves cave/castle exploration and trap detection.",
 }
 
-STARTING_POINTS  = 210
+STARTING_POINTS  = 180
 MIN_SKILL        = 5
 MAX_SKILL        = 100
 MAX_INVENTORY    = 12     # hard cap on carried items

@@ -2,7 +2,7 @@
 World map and travel engine.
 
 Linear map (west → east):
-  [Al-Rimal] ── desert ── [Waldheim] ── mountain ── [Las Cumbres]
+  [Dar-Nakhil] ── desert ── [Rabenmark] ── mountain ── [Greyspire]
 
 Travel is broken into steps. Each step has a chance of either a combat
 encounter or a special event (cave / castle). The Survival skill reduces
@@ -20,7 +20,7 @@ from data.enemies import get_enemy_for_biome, Enemy
 from engine.player import Player
 from engine.events import RoadEvent, random_cave, random_castle
 
-ROAD_STEPS            = 4     # steps to cross one road segment
+ROAD_STEPS            = 6     # steps to cross one road segment
 BASE_ENCOUNTER_CHANCE = 0.35  # base encounter rate per road step
 EVENT_CHANCE          = 0.65  # of any encounter, this portion becomes a special location
 MAP_BONUS_CHANCE      = 0.15  # additional event chance added when Adventurer's Map is active

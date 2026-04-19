@@ -5,7 +5,8 @@ Each has its own encounter pool and loot bias.
 """
 
 import random
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, field
 from typing import List
 
 from data.enemies import ENEMY_TEMPLATES, spawn_enemy, Enemy
@@ -18,9 +19,10 @@ class RoadEvent:
     description: str
     flavour: str          # one-line atmospheric description when spotted on road
     enemy_biome: str      # biome key used to pull enemies from
-    enemy_count: int      # how many fights inside
+    enemy_count: int      # how many fights inside (resolved at spawn from count_range)
     loot_bias: str        # loot quality bias inside
     lore_text: str = ""   # two-sentence lore entry added to Journal on clear
+    count_range: tuple = (1, 4)   # min/max enemy count — resolved each time the event spawns
 
 
 # ── Event pool ────────────────────────────────────────────────────────────────
@@ -34,6 +36,7 @@ CAVE_EVENTS = [
         enemy_biome="cave",
         enemy_count=2,
         loot_bias="uncommon",
+        count_range=(1, 3),
         lore_text=(
             "The Hollow Den was once a waystation for hunters who worked this stretch of road. "
             "No one is sure when the creatures moved in, or what happened to the last party who tried to reclaim it."
@@ -47,6 +50,7 @@ CAVE_EVENTS = [
         enemy_biome="cave",
         enemy_count=3,
         loot_bias="rare",
+        count_range=(2, 4),
         lore_text=(
             "The Dripping Grotto connects to an underground river that hasn't been mapped. "
             "Travellers who camped near the entrance reported hearing voices below, distinct from the water."
@@ -60,6 +64,7 @@ CAVE_EVENTS = [
         enemy_biome="cave",
         enemy_count=2,
         loot_bias="uncommon",
+        count_range=(1, 3),
         lore_text=(
             "The Cache was used by a now-defunct caravan guild to move goods past the city toll roads. "
             "The guild's ledger, if it still exists, would name every official who looked the other way."
@@ -79,6 +84,7 @@ CASTLE_EVENTS = [
         enemy_biome="castle",
         enemy_count=2,
         loot_bias="rare",
+        count_range=(2, 4),
         lore_text=(
             "The Broken Keep was abandoned during a siege that nobody won, according to the only surviving account. "
             "The attacking force, the defending garrison, and the chronicler who wrote the account all vanished within the same week."
@@ -95,6 +101,7 @@ CASTLE_EVENTS = [
         enemy_biome="castle",
         enemy_count=3,
         loot_bias="rare",
+        count_range=(2, 5),
         lore_text=(
             "The garrison was ordered to hold position by a commander who never returned with new orders. "
             "The soldiers held. Long past reason. Long past life, some say."
@@ -111,6 +118,7 @@ CASTLE_EVENTS = [
         enemy_biome="castle",
         enemy_count=2,
         loot_bias="rare",
+        count_range=(1, 3),
         lore_text=(
             "The Merchant Lord commissioned the castle to demonstrate his wealth, a miscalculation that cost him exactly that. "
             "Builders were still working the eastern tower when the bailiffs arrived — they never finished, and neither did he."
@@ -119,12 +127,19 @@ CASTLE_EVENTS = [
 ]
 
 
+def _resolve_event(event: RoadEvent) -> RoadEvent:
+    """Return a shallow copy of the event with enemy_count resolved from count_range."""
+    resolved = copy.copy(event)
+    resolved.enemy_count = random.randint(*event.count_range)
+    return resolved
+
+
 def random_cave() -> RoadEvent:
-    return random.choice(CAVE_EVENTS)
+    return _resolve_event(random.choice(CAVE_EVENTS))
 
 
 def random_castle() -> RoadEvent:
-    return random.choice(CASTLE_EVENTS)
+    return _resolve_event(random.choice(CASTLE_EVENTS))
 
 
 def get_event_enemies(event: RoadEvent) -> List[Enemy]:

@@ -75,6 +75,21 @@ def hr(char: str = "═", width: int = 62):
 # Melodic sequences: list of (frequency_hz, duration_ms) pairs.
 # 0 Hz = silent pause.
 _MELODIES = {
+    # Dark fantasy ambient loop — A minor, slow and haunting.
+    # Played continuously in background; stops for combat, resumes after.
+    "ambient": [
+        (110, 300), (0, 250),   # A2 — low root drone
+        (165, 250), (0, 200),   # E3 — fifth, hollow
+        (131, 200), (0, 300),   # C3 — minor third
+        (147, 250), (0, 200),   # D3
+        (220, 300), (0, 500),   # A3 — octave climb
+        (196, 200), (0, 200),   # G3
+        (175, 200), (0, 300),   # F3 — melancholy
+        (165, 300), (0, 600),   # E3 — resolve
+        (147, 200), (0, 200),   # D3 — descend
+        (131, 250), (0, 300),   # C3
+        (110, 400), (0, 2500),  # A2 — return to root, long silence
+    ],
     "city_arrive": [
         (523, 80), (659, 80), (784, 80), (1047, 180),
     ],
@@ -125,6 +140,52 @@ def play_melody(name: str) -> None:
 
     t = threading.Thread(target=_play, daemon=True)
     t.start()
+
+
+# ── Ambient music loop ───────────────────────────────────────────────────────
+
+_ambient_stop_event = threading.Event()
+_ambient_thread: threading.Thread = None
+
+
+def start_ambient_loop() -> None:
+    """Start the dark fantasy ambient melody looping in the background.
+    Safe to call multiple times — skips if already running.
+    Silently does nothing on non-Windows or if winsound is unavailable.
+    """
+    global _ambient_thread
+    if _ambient_thread is not None and _ambient_thread.is_alive():
+        return   # already playing
+
+    _ambient_stop_event.clear()
+
+    def _loop():
+        try:
+            import winsound
+            tones = _MELODIES["ambient"]
+            while not _ambient_stop_event.is_set():
+                for freq, dur in tones:
+                    if _ambient_stop_event.is_set():
+                        return
+                    if freq == 0:
+                        # Break long pauses into short chunks so we can stop quickly
+                        elapsed = 0
+                        chunk = 50
+                        while elapsed < dur and not _ambient_stop_event.is_set():
+                            time.sleep(min(chunk, dur - elapsed) / 1000.0)
+                            elapsed += chunk
+                    else:
+                        winsound.Beep(freq, dur)
+        except Exception:
+            pass
+
+    _ambient_thread = threading.Thread(target=_loop, daemon=True)
+    _ambient_thread.start()
+
+
+def stop_ambient_loop() -> None:
+    """Stop the ambient loop as soon as the current note finishes."""
+    _ambient_stop_event.set()
 
 
 def beep(tone: str = "attack"):
@@ -342,7 +403,7 @@ def show_combat_screen(player, enemy, message: str = ""):
     e_bar = hp_bar(enemy.hp, enemy.max_hp)
     print(f"  {C.BRED}{C.BOLD}{enemy.name}{C.RESET}  {C.BBLACK}[{enemy.armor_type} armour]{C.RESET}")
     print(f"  HP  {e_bar}  {enemy.hp}/{enemy.max_hp}")
-    print(f"  {C.DIM}Combat {enemy.combat_skill}   Defense {enemy.defense_skill}   Agility {enemy.agility}{C.RESET}")
+    print(f"  {C.DIM}Martial {enemy.combat_skill}   Defense {enemy.defense_skill}   Stealth {enemy.agility}{C.RESET}")
     print()
     hr("─")
 
@@ -479,4 +540,6 @@ def show_journal(player) -> None:
                     line += word + " "
             if line.strip():
                 print(f"  {C.DIM}{line.strip()}{C.RESET}")
-            h
+            hr("─")
+
+    pause()

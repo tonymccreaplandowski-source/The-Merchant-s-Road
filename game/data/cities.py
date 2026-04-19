@@ -2,7 +2,7 @@
 City definitions and biome pricing system.
 
 World layout (west → east):
-  [Al-Rimal] ── desert ── [Waldheim] ── mountain ── [Las Cumbres]
+  [Dar-Nakhil] ── desert ── [Rabenmark] ── mountain ── [Greyspire]
 
 Pricing logic:
   Abundant items  →  merchant pays 70% of base value  (flooded with supply)

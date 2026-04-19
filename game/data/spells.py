@@ -50,7 +50,7 @@ SPELLS = {
         "damage_type":   "shadow",
     },
     "Lightning Arc": {
-        "cost":          22,
+        "cost":          32,
         "power":         20,
         "description":   "Raw lightning. Strips through armour like it is not there.",
         "effectiveness": {"none": 1.5, "cloth": 1.5, "leather": 1.5, "mail": 1.5},
