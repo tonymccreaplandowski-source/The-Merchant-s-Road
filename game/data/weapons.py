@@ -125,8 +125,8 @@ MOVES = {
         "special": "stealth_boost",
     },
     "Long Shot": {
-        "power": 11,
-        "description": "A powerful long-range strike. Boosted by your Martial skill.",
+        "power": 8,
+        "description": "A ranged strike with some Martial pull behind it.",
         "effectiveness": {"none": 1.4, "cloth": 1.4, "leather": 1.2, "mail": 0.9},
         "special": "martial_boost",
     },

@@ -89,8 +89,16 @@ def calculate_damage(
     special       = move.get("special")
     special_val   = move.get("special_value", 0.0)
 
-    # Miss chance (Overhead, Smash)
+    # Move-specific miss chance (Overhead, Smash)
     if special == "miss_chance" and random.random() < special_val:
+        return 0, "missed", False, "miss"
+
+    # ── D20 general hit roll ──────────────────────────────────────────────────
+    # When defense is high relative to attacker, attacks can miss entirely.
+    # Roll d20 + attacker_combat // 5.  Must beat defender_defense // 4 + 2.
+    hit_roll    = random.randint(1, 20) + attacker_combat // 5
+    hit_needed  = defender_defense // 4 + 2
+    if hit_roll < hit_needed:
         return 0, "missed", False, "miss"
 
     # Skill modifier
@@ -107,7 +115,8 @@ def calculate_damage(
         bonus_mult = 1.0 + player.skill("Stealth") / 100.0
         special_tag = "stealth boost"
     elif player and special == "martial_boost":
-        bonus_mult = 1.0 + player.skill("Martial") / 100.0
+        # Halved compared to stealth_boost to prevent bow/martial stacking dominance
+        bonus_mult = 1.0 + player.skill("Martial") / 200.0
         special_tag = "martial boost"
 
     variance = random.uniform(0.85, 1.15)

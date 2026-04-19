@@ -21,14 +21,15 @@ from data.weapons   import MOVES
 from data.spells    import get_available_spells
 from data.items     import (
     WEAPON_ITEMS, ARMOR_ITEMS, ACCESSORY_ITEMS, POTION_ITEMS,
-    TRADE_ITEMS, get_items_by_rarity, ITEM_LOOKUP,
+    SUPPLY_ITEMS, TRADE_ITEMS, get_items_by_rarity, ITEM_LOOKUP,
 )
 from ui.display     import (
     C, RARITY_COLOR, BIOME_COLOR,
     clear, pause, hr, section, title_screen,
     prompt_choice, item_line, rarity_tag,
     show_world_map, show_combat_screen, show_character_sheet,
-    skill_bar, hp_bar, mana_bar, beep,
+    skill_bar, hp_bar, mana_bar, beep, play_melody,
+    typewrite, show_journal,
 )
 
 
@@ -36,14 +37,95 @@ from ui.display     import (
 #   HELPERS
 # ════════════════════════════════════════════════════════════════
 
-def _sell_price(item, city) -> int:
-    """65% of base value, modified by city scarcity/abundance."""
-    return max(1, round(item.base_value * city.price_modifier(item.name) * 0.65))
+def _sell_price(item, city, discount: float = 1.0) -> int:
+    """65% of base value, modified by city scarcity/abundance.
+    discount < 1.0 means a successful negotiate improved the deal.
+    For selling, a discount of 0.85 → sell bonus multiplier of 1.15.
+    """
+    sell_mult = 2.0 - discount   # 0.85 buy disc → 1.15 sell bonus; 1.0 → 1.0
+    return max(1, round(item.base_value * city.price_modifier(item.name) * 0.65 * sell_mult))
 
 
-def _buy_price(item, city) -> int:
-    """130% of base value, modified by city pricing."""
-    return max(1, round(item.base_value * city.price_modifier(item.name) * 1.30))
+def _buy_price(item, city, discount: float = 1.0) -> int:
+    """130% of base value, modified by city pricing and negotiate discount."""
+    return max(1, round(item.base_value * city.price_modifier(item.name) * 1.30 * discount))
+
+
+# ── Merchant constants ────────────────────────────────────────────────────────
+
+MERCHANT_NAMES = [
+    "Aldric", "Berwen", "Cade", "Drusilla", "Eamon", "Farren",
+    "Gwenda", "Halsten", "Irja", "Jovan", "Kael", "Lidda",
+    "Maren", "Nath", "Orla", "Pell", "Quelda", "Rowan",
+    "Sable", "Torsten", "Ulric", "Veyra", "Westan", "Xanthe",
+    "Yvor", "Zara", "Brand", "Corra", "Daven", "Elsin",
+]
+
+# Each merchant type: (type_label, tagline, item_pool_fn)
+# item_pool_fn returns the candidate item list to sample from
+def _pool_blacksmith():
+    return [i for i in WEAPON_ITEMS + ARMOR_ITEMS if not i.cursed]
+
+def _pool_apothecary():
+    return list(POTION_ITEMS)
+
+def _pool_librarian():
+    from data.items import BOOK_ITEMS
+    return list(BOOK_ITEMS)
+
+def _pool_survival():
+    return [i for i in SUPPLY_ITEMS if i.item_type in ("material", "consumable")]
+
+def _pool_dungeoneering():
+    from data.items import BOOK_ITEMS
+    dung_names = {"Rope", "Grappling Hook", "Lock Picks", "Lantern",
+                  "Tinderbox", "Torch Bundle", "Adventurer's Map"}
+    return (
+        [i for i in SUPPLY_ITEMS if i.name in dung_names]
+        + [i for i in BOOK_ITEMS]
+    )
+
+def _pool_leatherworker():
+    leather_armor = [i for i in ARMOR_ITEMS
+                     if i.stat_bonuses and "Stealth" in i.stat_bonuses and not i.cursed]
+    return leather_armor + [i for i in ACCESSORY_ITEMS if not i.cursed]
+
+MERCHANT_TYPES = [
+    ("Blacksmith",        "Soot-stained hands, straight talk, sharp steel.",     _pool_blacksmith),
+    ("Apothecary",        "Herbs and remedies for every road ailment.",           _pool_apothecary),
+    ("Librarian",         "Quiet, watchful, and oddly well-informed.",            _pool_librarian),
+    ("Survival Trader",   "Rations, rope, and everything the road demands.",      _pool_survival),
+    ("Dungeoneering Co.", "Lanterns, picks, and maps of the unseen places.",      _pool_dungeoneering),
+    ("Leatherworker",     "Soft goods for those who prefer to stay unnoticed.",   _pool_leatherworker),
+]
+
+
+def _generate_merchant(used_names: set) -> dict:
+    """Spawn a single merchant with a random type and stock."""
+    mtype_label, tagline, pool_fn = random.choice(MERCHANT_TYPES)
+
+    # Pick a unique name
+    available = [n for n in MERCHANT_NAMES if n not in used_names]
+    name = random.choice(available) if available else random.choice(MERCHANT_NAMES)
+    used_names.add(name)
+
+    pool  = pool_fn()
+    stock = random.sample(pool, min(5, len(pool))) if pool else []
+
+    return {
+        "name":       name,
+        "type":       mtype_label,
+        "tagline":    tagline,
+        "stock":      list(stock),
+        "sold_items": [],       # items the player sold — can be bought back
+        "discount":   1.0,      # set by negotiate session (< 1.0 = cheaper prices)
+    }
+
+
+def generate_city_merchants(city_key: str) -> list:
+    """Return 3 merchants for a city visit. Called once per visit."""
+    used = set()
+    return [_generate_merchant(used) for _ in range(3)]
 
 
 def _training_cost(level: int) -> int:
@@ -71,13 +153,23 @@ def _format_time(days: int) -> str:
 
 
 def use_potion(player: Player, potion, state: dict) -> str:
-    """Apply a potion's effect. Returns a flavour message string."""
+    """Apply a potion/consumable effect. Returns a flavour message string."""
     effect = potion.effect or ""
     if effect == "heal_30":
         before = player.hp
         player.heal(30)
         gained = player.hp - before
         return f"You drink the {potion.name}. +{gained} HP."
+    if effect == "heal_20":
+        before = player.hp
+        player.heal(20)
+        gained = player.hp - before
+        return f"You use the {potion.name}. +{gained} HP."
+    if effect == "heal_15":
+        before = player.hp
+        player.heal(15)
+        gained = player.hp - before
+        return f"You eat the {potion.name}. +{gained} HP."
     if effect == "mana_25":
         before = player.mana
         player.restore_mana(25)
@@ -93,28 +185,15 @@ def use_potion(player: Player, potion, state: dict) -> str:
         player.heal(player.max_hp)
         player.restore_mana()
         return f"You drink the {potion.name}. HP and Mana fully restored\!"
+    if effect == "map_bonus":
+        player.map_bonus = True
+        return f"You study the {potion.name}. Nearby locations will be easier to find."
+    if effect == "torch":
+        return f"You light the {potion.name}. The dark pulls back a little."
     return f"You use the {potion.name}."
 
 
-def generate_city_stock(city_key: str, city) -> list:
-    """
-    Generate a randomised shop stock for this city.
-    Returns a list of Item objects available to buy this visit.
-    """
-    # Items without cursed flag; potions are always available
-    pool_equip   = [i for i in WEAPON_ITEMS + ARMOR_ITEMS + ACCESSORY_ITEMS if not i.cursed]
-    pool_potions = list(POTION_ITEMS)
-
-    # Bias toward items the city sells (those that are abundant or general)
-    biome = city.biome
-    biome_tagged = [i for i in pool_equip if biome in (i.biome_tags or [])]
-    untagged     = [i for i in pool_equip if not i.biome_tags]
-
-    equip_pool   = biome_tagged + untagged
-    equip_pick   = random.sample(equip_pool, min(4, len(equip_pool)))
-    potion_pick  = random.sample(pool_potions, min(3, len(pool_potions)))
-
-    return equip_pick + potion_pick
+# (generate_city_stock removed — replaced by generate_city_merchants above)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -221,6 +300,7 @@ def run_combat(player: Player, enemy) -> bool:
     Returns True if player wins, False if player fled or was killed.
     """
     state        = fresh_state()
+    play_melody("combat_start")
     player_first = roll_initiative(player, enemy)
 
     if player_first:
@@ -262,15 +342,10 @@ def run_combat(player: Player, enemy) -> bool:
             move_options = []
             for mn in moves:
                 move = MOVES[mn]
-                eff  = move["effectiveness"].get(enemy.armor_type, 1.0)
-                if eff >= 1.40:
-                    tag = f"{C.BGREEN}✓ strong{C.RESET}"
-                elif eff < 0.80:
-                    tag = f"{C.BRED}✗ weak{C.RESET}"
-                else:
-                    tag = f"{C.BYELLOW}~ okay{C.RESET}"
+                # Effectiveness is intentionally NOT shown here — it reveals
+                # itself in the result message after the strike lands.
                 move_options.append(
-                    f"{C.BOLD}{mn:<14}{C.RESET}  {tag}  {C.DIM}{move['description']}{C.RESET}"
+                    f"{C.BOLD}{mn:<14}{C.RESET}  {C.DIM}{move['description']}{C.RESET}"
                 )
             move_options.append(f"{C.BBLACK}← Back{C.RESET}")
 
@@ -418,12 +493,12 @@ def run_combat(player: Player, enemy) -> bool:
     # ── Combat end ────────────────────────────────────────────────────────────
     if not player.is_alive():
         show_combat_screen(player, enemy, "You collapse. The world fades to black...")
-        beep("death")
+        play_melody("death")
         time.sleep(2)
         return False
 
     show_combat_screen(player, enemy, f"Victory\! The {enemy.name} falls\!")
-    beep("victory")
+    play_melody("victory")
     time.sleep(1.5)
     return True
 
@@ -487,7 +562,7 @@ def equip_screen(player: Player):
                 color   = RARITY_COLOR.get(item.rarity, C.WHITE)
                 bonuses = ""
                 if item.stat_bonuses:
-                    parts   = [f"+{v} {k}" for k, v in item.stat_bonuses.items()]
+                    parts   = [f"{'+' if v >= 0 else ''}{v} {k}" for k, v in item.stat_bonuses.items()]
                     bonuses = f"  {C.DIM}({', '.join(parts)}){C.RESET}"
                 curse_tag = f"  {C.BRED}[CURSED]{C.RESET}" if item.cursed else ""
                 print(f"  {C.BCYAN}{label:<10}{C.RESET}  {color}{item.name}{C.RESET}{bonuses}{curse_tag}")
@@ -506,7 +581,7 @@ def equip_screen(player: Player):
             if item.armor_value:
                 stat_hint = f"  {C.DIM}(def +{item.armor_value}){C.RESET}"
             elif item.stat_bonuses:
-                parts     = [f"+{v} {k}" for k, v in item.stat_bonuses.items()]
+                parts     = [f"{'+' if v >= 0 else ''}{v} {k}" for k, v in item.stat_bonuses.items()]
                 stat_hint = f"  {C.DIM}({', '.join(parts)}){C.RESET}"
             else:
                 stat_hint = ""
@@ -569,28 +644,161 @@ def equip_screen(player: Player):
 
 
 # ════════════════════════════════════════════════════════════════
-#   CITY — MERCHANT
+#   CITY — NEGOTIATE MINIGAME
 # ════════════════════════════════════════════════════════════════
 
-def visit_merchant(player: Player, city):
-    """
-    Merchant screen with both SELL and BUY tabs.
-    Stock is randomised fresh each visit.
-    """
-    stock = generate_city_stock(city.key, city)
+_TACTICS = [
+    ("Appeal to shared interests", "Merchantilism",  "You invoke market wisdom and mutual benefit."),
+    ("Flatter their craftsmanship", "Speechcraft",   "You compliment the quality of their wares."),
+    ("Share a useful rumour",       "Dungeoneering",  "You offer a piece of valuable road knowledge."),
+    ("Stand your ground",           "Martial",        "You let quiet confidence do the talking."),
+]
 
-    while True:
+def negotiate_session(player: Player, merchant: dict) -> float:
+    """
+    3-round negotiation minigame. Returns a price multiplier for this merchant.
+    0.82 = 18% off (perfect),  0.90 = 10% off,  0.95 = 5% off,  1.0 = no change,
+    1.08 = 8% premium (botched).
+    Can only be run once per merchant — sets merchant["negotiated"] flag.
+    """
+    if merchant.get("negotiated"):
+        disc = merchant["discount"]
+        label = (
+            f"{C.BGREEN}Already negotiated — {round((1 - disc)*100)}% discount active.{C.RESET}"
+            if disc < 1.0 else
+            f"{C.BRED}Already negotiated — they won't talk again.{C.RESET}"
+        )
         clear()
-        title_screen(f"MERCHANT — {city.name.upper()}")
-        print(f"  {C.DIM}A merchant eyes your pack with professional curiosity.{C.RESET}")
-        print(f"  {C.DIM}[{city.biome.capitalize()} city — local pricing applies]{C.RESET}")
+        title_screen(f"NEGOTIATE — {merchant['name']}")
+        print(f"\n  {label}")
+        pause()
+        return disc
+
+    difficulty   = random.randint(28, 68)
+    rounds_won   = 0
+    round_log    = []
+
+    for round_num in range(1, 4):
+        clear()
+        title_screen(f"NEGOTIATE — {merchant['name']}  ({merchant['type']})")
+        print(f"  {C.DIM}\"{merchant['tagline']}\"{C.RESET}")
         print()
-        print(f"  {C.BYELLOW}Your gold: {player.gold}gp{C.RESET}")
+        if round_log:
+            for log_line in round_log:
+                print(f"  {log_line}")
+            print()
+        print(f"  {C.BYELLOW}Round {round_num}/3   Wins so far: {rounds_won}{C.RESET}")
         print()
 
-        tab = prompt_choice(["Sell items", "Buy items", "Leave shop"])
-        if tab == 3:
+        options = []
+        for tactic_name, skill_name, _ in _TACTICS:
+            val = player.skill(skill_name)
+            options.append(
+                f"{C.BOLD}{tactic_name:<32}{C.RESET}  "
+                f"{C.DIM}[{skill_name}: {val}]{C.RESET}"
+            )
+        options.append(f"{C.BBLACK}← Walk away{C.RESET}")
+
+        choice = prompt_choice(options, "Your approach")
+        if choice == len(options):
+            merchant["negotiated"] = True
+            merchant["discount"]   = 1.0
+            clear()
+            print(f"\n  {C.DIM}You step back. The prices stay where they are.{C.RESET}")
+            pause()
+            return 1.0
+
+        tactic_name, skill_name, flavour = _TACTICS[choice - 1]
+        skill_val     = player.skill(skill_name)
+        player_roll   = random.randint(1, 20) + skill_val // 4
+        merchant_roll = random.randint(1, 20) + difficulty // 4
+
+        if player_roll >= merchant_roll:
+            rounds_won += 1
+            round_log.append(
+                f"{C.BGREEN}✓ Round {round_num}:{C.RESET} {flavour}  "
+                f"{C.DIM}(rolled {player_roll} vs {merchant_roll}){C.RESET}"
+            )
+        else:
+            round_log.append(
+                f"{C.BRED}✗ Round {round_num}:{C.RESET} They hold firm.  "
+                f"{C.DIM}(rolled {player_roll} vs {merchant_roll}){C.RESET}"
+            )
+        time.sleep(0.4)
+
+    # ── Result ────────────────────────────────────────────────────────────
+    clear()
+    title_screen("NEGOTIATION RESULT")
+    for log_line in round_log:
+        print(f"  {log_line}")
+    print()
+
+    if rounds_won == 3:
+        disc        = 0.82
+        result_msg  = f"{C.BGREEN}Flawless. 18% discount secured for this merchant.{C.RESET}"
+        play_melody("negotiate_win")
+    elif rounds_won == 2:
+        disc        = 0.90
+        result_msg  = f"{C.BGREEN}Strong showing. 10% discount secured.{C.RESET}"
+        play_melody("negotiate_win")
+    elif rounds_won == 1:
+        disc        = 0.95
+        result_msg  = f"{C.BYELLOW}Partial win. 5% discount secured.{C.RESET}"
+    else:
+        disc        = 1.08
+        result_msg  = f"{C.BRED}They're insulted. Prices are 8% higher now.{C.RESET}"
+        play_melody("negotiate_lose")
+
+    print(f"  {result_msg}")
+    print(f"  {C.DIM}Rounds won: {rounds_won}/3{C.RESET}")
+    merchant["discount"]   = disc
+    merchant["negotiated"] = True
+    pause()
+    return disc
+
+
+# ════════════════════════════════════════════════════════════════
+#   CITY — MERCHANT SCREEN (single merchant)
+# ════════════════════════════════════════════════════════════════
+
+def merchant_screen(player: Player, city, merchant: dict):
+    """Interact with a single named merchant — Sell / Buy / Negotiate / Leave."""
+    while True:
+        disc     = merchant.get("discount", 1.0)
+        disc_str = (
+            f"  {C.BGREEN}[{round((1 - disc)*100)}% discount active]{C.RESET}"
+            if disc < 1.0 else
+            f"  {C.BRED}[+{round((disc - 1)*100)}% premium]{C.RESET}"
+            if disc > 1.0 else ""
+        )
+
+        clear()
+        title_screen(f"{merchant['name'].upper()} — {merchant['type'].upper()}")
+        print(f"  {C.DIM}\"{merchant['tagline']}\"{C.RESET}{disc_str}")
+        print(f"  {C.DIM}[{city.biome.capitalize()} pricing]{C.RESET}")
+        print()
+        print(f"  {C.BYELLOW}Your gold: {player.gold}gp{C.RESET}  "
+              f"{C.DIM}Bag: {len(player.inventory)}/{MAX_INVENTORY}{C.RESET}")
+        print()
+
+        neg_label = (
+            f"Negotiate  {C.DIM}(prices already set){C.RESET}"
+            if merchant.get("negotiated") else
+            f"Negotiate  {C.DIM}(haggle for better prices){C.RESET}"
+        )
+        tab = prompt_choice([
+            "Sell items",
+            "Buy items",
+            neg_label,
+            "Leave",
+        ])
+        if tab == 4:
             return
+
+        # ════ NEGOTIATE ═══════════════════════════════════════════════════
+        if tab == 3:
+            negotiate_session(player, merchant)
+            continue
 
         # ════ SELL TAB ════════════════════════════════════════════════════
         if tab == 1:
@@ -600,18 +808,18 @@ def visit_merchant(player: Player, city):
                 continue
 
             clear()
-            title_screen(f"SELL — {city.name.upper()}")
+            title_screen(f"SELL — {merchant['name'].upper()}")
             print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}")
             print()
 
             options = []
             for item in player.inventory:
-                sp  = _sell_price(item, city)
+                sp  = _sell_price(item, city, disc)
                 mod = city.price_modifier(item.name)
                 if mod > 1.0:
-                    price_str = f"{C.BGREEN}{sp}gp ▲ (scarce here){C.RESET}"
+                    price_str = f"{C.BGREEN}{sp}gp ▲ (scarce){C.RESET}"
                 elif mod < 1.0:
-                    price_str = f"{C.BRED}{sp}gp ▼ (abundant here){C.RESET}"
+                    price_str = f"{C.BRED}{sp}gp ▼ (abundant){C.RESET}"
                 else:
                     price_str = f"{C.WHITE}{sp}gp{C.RESET}"
                 options.append(
@@ -625,39 +833,45 @@ def visit_merchant(player: Player, city):
                 continue
 
             item = player.inventory[choice - 1]
-            sp   = _sell_price(item, city)
+            sp   = _sell_price(item, city, disc)
             player.remove_item(item)
             player.gold += sp
-            print(f"\n  {C.BGREEN}Sold {item.name} for {sp}gp.  Total gold: {player.gold}gp{C.RESET}")
+            merchant["sold_items"].append(item)   # player can buy it back
+            print(f"\n  {C.BGREEN}Sold {item.name} for {sp}gp.  Gold: {player.gold}gp{C.RESET}")
             time.sleep(0.9)
 
         # ════ BUY TAB ════════════════════════════════════════════════════
         elif tab == 2:
-            if not stock:
-                print(f"\n  {C.BBLACK}The merchant has nothing in stock today.{C.RESET}")
+            all_buyable = merchant["stock"] + merchant["sold_items"]
+            if not all_buyable:
+                print(f"\n  {C.BBLACK}Nothing left in stock.{C.RESET}")
                 pause("Press Enter to go back...")
                 continue
 
             clear()
-            title_screen(f"BUY — {city.name.upper()}")
-            print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}")
-            print(f"  {C.DIM}Bag: {len(player.inventory)}/{MAX_INVENTORY} items{C.RESET}")
+            title_screen(f"BUY — {merchant['name'].upper()}")
+            print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}  "
+                  f"{C.DIM}Bag: {len(player.inventory)}/{MAX_INVENTORY}{C.RESET}")
             print()
 
             options = []
-            for item in stock:
-                bp  = _buy_price(item, city)
+            for item in all_buyable:
+                bp  = _buy_price(item, city, disc)
                 mod = city.price_modifier(item.name)
+                # Mark items sold back by the player
+                is_sellback = item in merchant["sold_items"]
+                tag = f"  {C.BYELLOW}[yours]{C.RESET}" if is_sellback else ""
                 if mod < 1.0:
-                    price_str = f"{C.BGREEN}{bp}gp ▼ (good deal here){C.RESET}"
+                    price_str = f"{C.BGREEN}{bp}gp ▼{C.RESET}"
                 elif mod > 1.0:
-                    price_str = f"{C.BRED}{bp}gp ▲ (scarce here){C.RESET}"
+                    price_str = f"{C.BRED}{bp}gp ▲{C.RESET}"
                 else:
                     price_str = f"{C.WHITE}{bp}gp{C.RESET}"
-                affordable = "  " if player.gold >= bp else f"  {C.BRED}✗{C.RESET}"
+                affordable = "" if player.gold >= bp else f"  {C.BRED}✗{C.RESET}"
                 options.append(
-                    f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}  "
-                    f"{price_str}{affordable}  {C.DIM}{item.description[:45]}{C.RESET}"
+                    f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}"
+                    f"{tag}  {price_str}{affordable}  "
+                    f"{C.DIM}{item.description[:40]}{C.RESET}"
                 )
             options.append(f"{C.BBLACK}← Back{C.RESET}")
 
@@ -665,21 +879,73 @@ def visit_merchant(player: Player, city):
             if choice == len(options):
                 continue
 
-            item = stock[choice - 1]
-            bp   = _buy_price(item, city)
+            item = all_buyable[choice - 1]
+            bp   = _buy_price(item, city, disc)
 
             if player.gold < bp:
                 print(f"\n  {C.RED}Not enough gold. Need {bp}gp, have {player.gold}gp.{C.RESET}")
                 time.sleep(1.0)
             elif not player.can_carry():
-                print(f"\n  {C.RED}Your pack is full ({MAX_INVENTORY}/{MAX_INVENTORY} items).{C.RESET}")
+                print(f"\n  {C.RED}Pack full ({MAX_INVENTORY}/{MAX_INVENTORY} items).{C.RESET}")
                 time.sleep(1.0)
             else:
                 player.gold -= bp
                 player.add_item(item)
-                stock.remove(item)
-                print(f"\n  {C.BGREEN}Bought {item.name} for {bp}gp. Gold remaining: {player.gold}gp.{C.RESET}")
+                # Remove from the correct list
+                if item in merchant["sold_items"]:
+                    merchant["sold_items"].remove(item)
+                else:
+                    merchant["stock"].remove(item)
+                print(f"\n  {C.BGREEN}Bought {item.name} for {bp}gp. Gold: {player.gold}gp{C.RESET}")
                 time.sleep(0.9)
+
+
+# ════════════════════════════════════════════════════════════════
+#   CITY — MARKET (choose from 3 merchants)
+# ════════════════════════════════════════════════════════════════
+
+# Module-level merchant cache. City key → list of merchant dicts.
+# Cleared when the player leaves a city.
+_city_merchants: dict = {}
+
+
+def visit_market(player: Player, city):
+    """Show the 3 merchants available this visit and let the player pick one."""
+    global _city_merchants
+    city_key = city.key
+
+    # Generate merchants once per city visit
+    if city_key not in _city_merchants:
+        _city_merchants[city_key] = generate_city_merchants(city_key)
+
+    merchants = _city_merchants[city_key]
+
+    while True:
+        clear()
+        title_screen(f"THE MARKET — {city.name.upper()}")
+        print(f"  {C.DIM}Three merchants have set up stalls today.{C.RESET}")
+        print(f"  {C.BYELLOW}Your gold: {player.gold}gp{C.RESET}")
+        print()
+
+        options = []
+        for m in merchants:
+            disc     = m.get("discount", 1.0)
+            neg_tag  = (
+                f"  {C.BGREEN}[{round((1-disc)*100)}% off]{C.RESET}" if disc < 1.0 else
+                f"  {C.BRED}[+{round((disc-1)*100)}% up]{C.RESET}"   if disc > 1.0 else ""
+            )
+            options.append(
+                f"{C.BCYAN}{m['name']:<12}{C.RESET}  "
+                f"{C.BOLD}{m['type']}{C.RESET}{neg_tag}  "
+                f"{C.DIM}{m['tagline']}{C.RESET}"
+            )
+        options.append(f"{C.BBLACK}← Leave the market{C.RESET}")
+
+        choice = prompt_choice(options, "Approach which merchant?")
+        if choice == len(options):
+            return
+
+        merchant_screen(player, city, merchants[choice - 1])
 
 
 # ════════════════════════════════════════════════════════════════
@@ -752,6 +1018,8 @@ def rest_at_inn(player: Player):
 
 def city_loop(player: Player):
     """Main city interaction loop. Exits when the player begins travelling."""
+    global _city_merchants
+
     while True:
         city = CITIES[player.current_city]
         show_world_map(player)
@@ -759,13 +1027,19 @@ def city_loop(player: Player):
         print()
         section("WHAT WOULD YOU LIKE TO DO?")
 
-        adjacent = get_adjacent_city_keys(player.current_city)
-        options  = [
-            f"Merchant          {C.DIM}(sell goods / buy supplies){C.RESET}",
+        adjacent   = get_adjacent_city_keys(player.current_city)
+        journal_ct = len(player.journal)
+        journal_hint = (
+            f"{C.DIM}({journal_ct} entr{'y' if journal_ct == 1 else 'ies'}){C.RESET}"
+        )
+
+        options = [
+            f"The Market        {C.DIM}(3 merchants — buy, sell, negotiate){C.RESET}",
             f"Equipment         {C.DIM}(manage equipped items){C.RESET}",
             f"Training Hall     {C.DIM}(improve skills for gold){C.RESET}",
             f"Rest at the Inn   {C.DIM}(restore HP & mana — 10gp){C.RESET}",
             f"Character Sheet   {C.DIM}(stats, equipment, inventory){C.RESET}",
+            f"Journal           {journal_hint}",
         ]
         for dest_key in adjacent:
             dest       = CITIES[dest_key]
@@ -777,10 +1051,10 @@ def city_loop(player: Player):
         options.append(f"{C.BBLACK}Quit{C.RESET}")
 
         choice = prompt_choice(options, "Your choice")
-        n_base = 5
+        n_base = 6   # now 6 base options (added Journal)
 
         if choice == 1:
-            visit_merchant(player, city)
+            visit_market(player, city)
         elif choice == 2:
             equip_screen(player)
         elif choice == 3:
@@ -789,8 +1063,12 @@ def city_loop(player: Player):
             rest_at_inn(player)
         elif choice == 5:
             show_character_sheet(player)
+        elif choice == 6:
+            show_journal(player)
         elif choice <= n_base + len(adjacent):
             dest_key = adjacent[choice - n_base - 1]
+            # Clear merchants for this city — they'll refresh next visit
+            _city_merchants.pop(player.current_city, None)
             start_travel(player, dest_key)
             return   # hand off to road loop
         else:
@@ -808,10 +1086,12 @@ def city_loop(player: Player):
 def explore_event(player: Player, event):
     """Handle a cave or castle exploration event."""
     icon = "🕳" if event.event_type == "cave" else "🏰"
+    play_melody("location_found")
     clear()
     print()
     print(f"  {C.BYELLOW}{icon}  {event.name.upper()}{C.RESET}")
-    print(f"  {C.DIM}{event.description}{C.RESET}")
+    print()
+    typewrite(event.description)
     print()
 
     choice = prompt_choice([
@@ -829,8 +1109,9 @@ def explore_event(player: Player, event):
     loc_color = C.BBLACK if event.event_type == "cave" else C.BYELLOW
     clear()
     print()
-    print(f"  {loc_color}{C.BOLD}You enter {event.name}...{C.RESET}")
-    time.sleep(1.0)
+    typewrite(f"You enter {event.name}...", indent=f"  {loc_color}")
+    print(C.RESET, end="")
+    time.sleep(0.8)
 
     for i, enemy in enumerate(enemies, 1):
         print(f"\n  {C.BRED}Enemy {i}/{len(enemies)}: {enemy.name} appears\!{C.RESET}")
@@ -847,7 +1128,7 @@ def explore_event(player: Player, event):
             time.sleep(1.0)
             return
 
-    # ── All cleared — double loot ─────────────────────────────────────────────
+    # ── All cleared — loot + lore ─────────────────────────────────────────────
     clear()
     print()
     print(f"  {C.BGREEN}{C.BOLD}You clear {event.name}\!{C.RESET}")
@@ -866,6 +1147,17 @@ def explore_event(player: Player, event):
         if pick == 1:
             player.add_item(loot)
             print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
+        time.sleep(0.5)
+
+    # ── Lore doc drop ─────────────────────────────────────────────────────────
+    if event.lore_text and event.lore_text not in player.journal:
+        player.journal.append(event.lore_text)
+        play_melody("journal_entry")
+        print()
+        hr("─")
+        print(f"  {C.BYELLOW}✦ Journal updated{C.RESET}")
+        typewrite(event.lore_text)
+        hr("─")
         time.sleep(0.5)
 
 
@@ -926,6 +1218,7 @@ def road_loop(player: Player):
 
         if arrived:
             city = CITIES[player.current_city]
+            play_melody("city_arrive")
             show_world_map(player)
             print(f"\n  {C.BGREEN}You arrive in {city.name}. Day {player.days_elapsed}.{C.RESET}")
             time.sleep(1.5)

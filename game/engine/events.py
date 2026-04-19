@@ -20,6 +20,7 @@ class RoadEvent:
     enemy_biome: str      # biome key used to pull enemies from
     enemy_count: int      # how many fights inside
     loot_bias: str        # loot quality bias inside
+    lore_text: str = ""   # two-sentence lore entry added to Journal on clear
 
 
 # ── Event pool ────────────────────────────────────────────────────────────────
@@ -33,6 +34,10 @@ CAVE_EVENTS = [
         enemy_biome="cave",
         enemy_count=2,
         loot_bias="uncommon",
+        lore_text=(
+            "The Hollow Den was once a waystation for hunters who worked this stretch of road. "
+            "No one is sure when the creatures moved in, or what happened to the last party who tried to reclaim it."
+        ),
     ),
     RoadEvent(
         event_type="cave",
@@ -42,6 +47,10 @@ CAVE_EVENTS = [
         enemy_biome="cave",
         enemy_count=3,
         loot_bias="rare",
+        lore_text=(
+            "The Dripping Grotto connects to an underground river that hasn't been mapped. "
+            "Travellers who camped near the entrance reported hearing voices below, distinct from the water."
+        ),
     ),
     RoadEvent(
         event_type="cave",
@@ -51,6 +60,10 @@ CAVE_EVENTS = [
         enemy_biome="cave",
         enemy_count=2,
         loot_bias="uncommon",
+        lore_text=(
+            "The Cache was used by a now-defunct caravan guild to move goods past the city toll roads. "
+            "The guild's ledger, if it still exists, would name every official who looked the other way."
+        ),
     ),
 ]
 
@@ -66,6 +79,10 @@ CASTLE_EVENTS = [
         enemy_biome="castle",
         enemy_count=2,
         loot_bias="rare",
+        lore_text=(
+            "The Broken Keep was abandoned during a siege that nobody won, according to the only surviving account. "
+            "The attacking force, the defending garrison, and the chronicler who wrote the account all vanished within the same week."
+        ),
     ),
     RoadEvent(
         event_type="castle",
@@ -78,6 +95,10 @@ CASTLE_EVENTS = [
         enemy_biome="castle",
         enemy_count=3,
         loot_bias="rare",
+        lore_text=(
+            "The garrison was ordered to hold position by a commander who never returned with new orders. "
+            "The soldiers held. Long past reason. Long past life, some say."
+        ),
     ),
     RoadEvent(
         event_type="castle",
@@ -90,6 +111,10 @@ CASTLE_EVENTS = [
         enemy_biome="castle",
         enemy_count=2,
         loot_bias="rare",
+        lore_text=(
+            "The Merchant Lord commissioned the castle to demonstrate his wealth, a miscalculation that cost him exactly that. "
+            "Builders were still working the eastern tower when the bailiffs arrived — they never finished, and neither did he."
+        ),
     ),
 ]
 

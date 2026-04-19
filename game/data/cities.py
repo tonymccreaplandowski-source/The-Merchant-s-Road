@@ -78,7 +78,7 @@ CITIES = {
     ),
     "ironpeak": City(
         key="ironpeak",
-        name="Peñasco",
+        name="Greyspire",
         biome="mountain",
         position=2,
         description=(

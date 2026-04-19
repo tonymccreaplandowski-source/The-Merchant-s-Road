@@ -21,14 +21,21 @@ from engine.player import Player
 from engine.events import RoadEvent, random_cave, random_castle
 
 ROAD_STEPS            = 4     # steps to cross one road segment
-BASE_ENCOUNTER_CHANCE = 0.28  # at Survival 0  (reduced from 0.40 for better pacing)
-EVENT_CHANCE          = 0.45  # of any encounter, this portion becomes a special event
+BASE_ENCOUNTER_CHANCE = 0.35  # base encounter rate per road step
+EVENT_CHANCE          = 0.65  # of any encounter, this portion becomes a special location
+MAP_BONUS_CHANCE      = 0.15  # additional event chance added when Adventurer's Map is active
 
 
 def get_encounter_chance(player: Player) -> float:
     """Survival skill reduces encounter frequency (max −0.40 at skill 100)."""
     reduction = player.skill("Survival") / 250.0
     return max(0.08, BASE_ENCOUNTER_CHANCE - reduction)
+
+
+def get_event_chance(player: Player) -> float:
+    """How much of any encounter roll becomes a special location vs a straight mob fight."""
+    bonus = MAP_BONUS_CHANCE if player.map_bonus else 0.0
+    return min(0.90, EVENT_CHANCE + bonus)
 
 
 def start_travel(player: Player, destination_key: str) -> None:
@@ -75,8 +82,11 @@ def take_road_step(
     # ── Encounter roll ────────────────────────────────────────────────────────
     if random.random() < get_encounter_chance(player):
 
-        # Decide: special event or combat?
-        if random.random() < EVENT_CHANCE:
+        # Decide: special event (cave/castle) or straight mob fight?
+        evt_chance = get_event_chance(player)
+        if random.random() < evt_chance:
+            # Map bonus consumed after contributing to this roll
+            player.map_bonus = False
             event = random_cave() if random.random() < 0.5 else random_castle()
             return False, None, event
         else:

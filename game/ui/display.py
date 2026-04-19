@@ -5,6 +5,9 @@ All rendering lives here. Game logic knows nothing about colours or layout.
 
 import os
 import re
+import sys
+import time
+import threading
 
 
 # ── ANSI colour constants ─────────────────────────────────────────────────────
@@ -69,6 +72,61 @@ def hr(char: str = "═", width: int = 62):
 
 # ── Sound (Windows beeps, silently ignored on other platforms) ─────────────────
 
+# Melodic sequences: list of (frequency_hz, duration_ms) pairs.
+# 0 Hz = silent pause.
+_MELODIES = {
+    "city_arrive": [
+        (523, 80), (659, 80), (784, 80), (1047, 180),
+    ],
+    "combat_start": [
+        (330, 60), (294, 60), (262, 120),
+    ],
+    "victory": [
+        (523, 80), (659, 80), (784, 80), (1047, 100),
+        (0, 40),
+        (784, 80), (1047, 200),
+    ],
+    "death": [
+        (440, 120), (370, 120), (311, 120), (262, 300),
+    ],
+    "location_found": [
+        (440, 60), (554, 60), (659, 100), (0, 40), (659, 80),
+    ],
+    "journal_entry": [
+        (523, 60), (659, 120),
+    ],
+    "negotiate_win": [
+        (523, 60), (659, 60), (784, 100), (1047, 180),
+    ],
+    "negotiate_lose": [
+        (330, 80), (294, 80), (262, 160),
+    ],
+}
+
+
+def play_melody(name: str) -> None:
+    """Play a named melody in a background thread (non-blocking).
+    Silently does nothing on non-Windows or if winsound is unavailable.
+    """
+    tones = _MELODIES.get(name)
+    if not tones:
+        return
+
+    def _play():
+        try:
+            import winsound
+            for freq, dur in tones:
+                if freq == 0:
+                    time.sleep(dur / 1000.0)
+                else:
+                    winsound.Beep(freq, dur)
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_play, daemon=True)
+    t.start()
+
+
 def beep(tone: str = "attack"):
     """
     Play a short system beep to accompany combat events.
@@ -78,18 +136,33 @@ def beep(tone: str = "attack"):
     try:
         import winsound
         _tones = {
-            "attack":  (440, 80),
+            "attack":  (440,  80),
             "hit":     (220, 100),
             "cast":    (660, 120),
             "heal":    (550, 100),
             "victory": (880, 250),
             "death":   (110, 500),
-            "menu":    (330, 60),
+            "menu":    (330,  60),
         }
         freq, dur = _tones.get(tone, (440, 80))
         winsound.Beep(freq, dur)
     except Exception:
         pass
+
+
+# ── Typewriter effect ─────────────────────────────────────────────────────────
+
+def typewrite(text: str, delay: float = 0.025, indent: str = "  ") -> None:
+    """Print text one character at a time for a typewriter effect.
+    Strips ANSI codes for delay timing, but prints raw text so colours work.
+    """
+    print(indent, end="", flush=True)
+    for ch in text:
+        sys.stdout.write(ch)
+        sys.stdout.flush()
+        if ch not in (" ", "\t"):
+            time.sleep(delay)
+    print()  # newline at end
 
 
 # ── Layout primitives ─────────────────────────────────────────────────────────
@@ -334,7 +407,7 @@ def show_character_sheet(player):
             color = RARITY_COLOR.get(item.rarity, C.WHITE)
             bonuses = ""
             if item.stat_bonuses:
-                parts = [f"+{v} {k}" for k, v in item.stat_bonuses.items()]
+                parts = [f"{'+' if v >= 0 else ''}{v} {k}" for k, v in item.stat_bonuses.items()]
                 bonuses = f"  {C.DIM}({', '.join(parts)}){C.RESET}"
             curse_tag = f"  {C.BRED}[CURSED]{C.RESET}" if item.cursed else ""
             print(f"  {C.BCYAN}{slot_label:<10}{C.RESET}  {color}{item.name}{C.RESET}{bonuses}{curse_tag}")
@@ -363,3 +436,47 @@ def show_character_sheet(player):
         print(f"  {C.DIM}Total base value: {total_val}gp{C.RESET}")
     print()
     pause()
+
+
+def show_journal(player) -> None:
+    """Render the player's lore journal with flavour text based on how full it is."""
+    clear()
+    title_screen("THE JOURNAL")
+
+    count = len(player.journal)
+
+    # Flavour text based on fullness
+    if count == 0:
+        flavour = "These pages are empty and ready to be filled with your adventures."
+    elif count < 10:
+        flavour = "You've been exploring the world. You realise not all is as you once thought."
+    elif count < 20:
+        flavour = "Pages falling out, leather torn. This book is full of all that has been seen."
+    else:
+        flavour = "Some call you sage, others call you wise. You know that you've seen the edges of the world."
+
+    print(f"  {C.BYELLOW}\"{flavour}\"{C.RESET}")
+    print(f"  {C.DIM}Entries: {count}{C.RESET}")
+    print()
+    hr()
+
+    if not player.journal:
+        print()
+        print(f"  {C.BBLACK}No lore discovered yet. Explore caves and castles.{C.RESET}")
+        print()
+    else:
+        for i, entry in enumerate(player.journal, 1):
+            print()
+            print(f"  {C.BYELLOW}Entry {i}{C.RESET}")
+            # Word-wrap at ~58 chars
+            words    = entry.split()
+            line     = ""
+            for word in words:
+                if len(line) + len(word) + 1 > 58:
+                    print(f"  {C.DIM}{line.strip()}{C.RESET}")
+                    line = word + " "
+                else:
+                    line += word + " "
+            if line.strip():
+                print(f"  {C.DIM}{line.strip()}{C.RESET}")
+            h

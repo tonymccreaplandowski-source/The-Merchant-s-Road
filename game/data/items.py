@@ -91,12 +91,22 @@ WEAPON_ITEMS = [
 ]
 
 # ── ARMOUR (equippable) ──────────────────────────────────────────────────────
+# Armor types carry skill bonuses/penalties:
+#   Cloth (Padded): +Magic 2          — suits mages, light and unobtrusive
+#   Leather:        +Stealth 3, +Survival 1  — suits rogues and rangers
+#   Mail/Plate:     +Martial, +Survival 2, -Stealth — suits warriors; penalises stealth builds
+# No armour equipped grants a passive +3 Magic (applied in player.skill())
 ARMOR_ITEMS = [
-    Item("Padded Jacket",    35, "common",   "armor", "Light cloth padding. Better than nothing.",       [], armor_value=3),
-    Item("Leather Vest",     65, "common",   "armor", "Tanned hide stitched into a serviceable vest.",   [], armor_value=6),
-    Item("Chain Hauberk",   120, "uncommon", "armor", "Interlocked iron rings. Heavy but effective.",    [], armor_value=10),
-    Item("Scale Armour",    180, "uncommon", "armor", "Overlapping steel scales. Solid protection.",     [], armor_value=13),
-    Item("Plate Cuirass",   350, "rare",     "armor", "Full-torso plate. Serious investment.",           [], armor_value=18),
+    Item("Padded Jacket",   35,  "common",   "armor", "Light cloth padding. Better than nothing.",       [], armor_value=3,
+         stat_bonuses={"Magic": 2}),
+    Item("Leather Vest",    65,  "common",   "armor", "Tanned hide stitched into a serviceable vest.",   [], armor_value=6,
+         stat_bonuses={"Stealth": 3, "Survival": 1}),
+    Item("Chain Hauberk",   120, "uncommon", "armor", "Interlocked iron rings. Heavy but effective.",    [], armor_value=10,
+         stat_bonuses={"Martial": 3, "Survival": 2, "Stealth": -3}),
+    Item("Scale Armour",    180, "uncommon", "armor", "Overlapping steel scales. Solid protection.",     [], armor_value=13,
+         stat_bonuses={"Martial": 4, "Survival": 2, "Stealth": -4}),
+    Item("Plate Cuirass",   350, "rare",     "armor", "Full-torso plate. Serious investment.",           [], armor_value=18,
+         stat_bonuses={"Martial": 6, "Survival": 2, "Stealth": -6}),
 ]
 
 # ── ACCESSORIES — rings and necklaces ────────────────────────────────────────
@@ -118,6 +128,22 @@ POTION_ITEMS = [
     Item("Strength Draft",   45, "uncommon", "potion", "Raises combat power for one fight.",             [], effect="str_boost"),
     Item("Swiftness Tonic",  40, "uncommon", "potion", "Raises agility for one fight.",                  [], effect="agi_boost"),
     Item("Full Restore",     90, "rare",     "potion", "Restores HP and mana fully. Tastes awful.",      [], effect="full_restore"),
+]
+
+# ── ROAD SUPPLIES (survival / dungeoneering merchant stock) ───────────────────
+SUPPLY_ITEMS = [
+    Item("Rope",               12, "common",   "material",   "Fifty feet of sturdy hemp. Always useful.",       [], effect=None),
+    Item("Dried Rations",      15, "common",   "consumable", "Hard tack and salted meat. Restores 15 HP.",      [], effect="heal_15"),
+    Item("Torch Bundle",       10, "common",   "consumable", "Three torches bound together. Lights the dark.",  [], effect="torch"),
+    Item("Adventurer's Map",   45, "uncommon", "consumable",
+         "A hand-drawn map of nearby roads. Increases chance of finding locations.",
+         [], effect="map_bonus"),
+    Item("Firewood",            8, "common",   "material",   "Split kindling for a road camp.",                 [], effect=None),
+    Item("Tinderbox",          18, "common",   "material",   "Flint and steel. Never leave town without one.",  [], effect=None),
+    Item("Bandages",           20, "common",   "consumable", "Clean linen wraps. Restores 20 HP out of combat.", [], effect="heal_20"),
+    Item("Grappling Hook",     35, "uncommon", "material",   "Thrown iron hook with rope. Dungeoneers swear by it.", [], effect=None),
+    Item("Lock Picks",         55, "uncommon", "material",   "A set of slender picks. Illegal in Greyspire.",   [], effect=None),
+    Item("Lantern",            40, "uncommon", "consumable", "A hooded lantern. Reveals the unseen.",            [], effect="torch"),
 ]
 
 # ── LORE BOOKS (readable, sell for small amounts) ─────────────────────────────
@@ -159,6 +185,7 @@ ITEMS = (
     + ARMOR_ITEMS
     + ACCESSORY_ITEMS
     + POTION_ITEMS
+    + SUPPLY_ITEMS
     + BOOK_ITEMS
 )
 

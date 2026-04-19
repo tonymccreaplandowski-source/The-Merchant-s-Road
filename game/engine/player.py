@@ -66,16 +66,32 @@ class Player:
     # Time
     days_elapsed: int               = 0
 
+    # Journal — stores lore texts discovered from cleared locations
+    journal: List[str]              = field(default_factory=list)
+
+    # Road buffs
+    map_bonus: bool                 = False   # active Adventurer's Map (+event chance)
+
     # ── Skill access ──────────────────────────────────────────────────────
     def skill(self, name: str) -> int:
-        """Return base skill + any bonuses from equipped accessories."""
+        """Return base skill + bonuses from accessories and equipped armor.
+        Armor bonuses can be negative (mail penalises Stealth).
+        Unarmoured characters gain a passive +3 Magic.
+        """
         base   = self.skills.get(name, 0)
         bonus  = 0
+        # Accessories (ring, necklace)
         for slot in ("ring", "necklace"):
             item = self.equipped.get(slot)
             if item and item.stat_bonuses:
                 bonus += item.stat_bonuses.get(name, 0)
-        return min(MAX_SKILL, base + bonus)
+        # Armor bonuses / penalties
+        armor_item = self.equipped.get("armor")
+        if armor_item and armor_item.stat_bonuses:
+            bonus += armor_item.stat_bonuses.get(name, 0)
+        elif not armor_item and name == "Magic":
+            bonus += 3   # unarmoured mage bonus
+        return min(MAX_SKILL, max(0, base + bonus))
 
     def base_skill(self, name: str) -> int:
         return self.skills.get(name, 0)
