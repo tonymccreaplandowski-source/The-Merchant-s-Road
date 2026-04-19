@@ -21,7 +21,7 @@ from data.weapons   import MOVES
 from data.spells    import get_available_spells
 from data.items     import (
     WEAPON_ITEMS, ARMOR_ITEMS, ACCESSORY_ITEMS, POTION_ITEMS,
-    SUPPLY_ITEMS, TRADE_ITEMS, get_items_by_rarity, ITEM_LOOKUP,
+    SUPPLY_ITEMS, TRADE_ITEMS, GRIMTOTEM_ITEMS, get_items_by_rarity, ITEM_LOOKUP,
 )
 from ui.display     import (
     C, RARITY_COLOR, BIOME_COLOR,
@@ -70,9 +70,19 @@ def _pool_blacksmith():
 def _pool_apothecary():
     return list(POTION_ITEMS)
 
-def _pool_librarian():
+def _pool_librarian(magic_skill: int = 0):
     from data.items import BOOK_ITEMS
-    return list(BOOK_ITEMS)
+    pool = list(BOOK_ITEMS)
+    # Grimtotems appear with tier-based probability; Magic skill slightly boosts chance
+    magic_bonus = magic_skill * 0.002   # 0.2% per Magic point
+    tier_chances = {"basic": 0.22 + magic_bonus, "mid": 0.08 + magic_bonus * 0.5, "advanced": 0.02 + magic_bonus * 0.25}
+    from data.spells import SPELLS
+    for gt in GRIMTOTEM_ITEMS:
+        spell = SPELLS.get(gt.spell_name, {})
+        tier  = spell.get("tier", "basic")
+        if random.random() < tier_chances.get(tier, 0.05):
+            pool.append(gt)
+    return pool
 
 def _pool_survival():
     return [i for i in SUPPLY_ITEMS if i.item_type in ("material", "consumable")]
@@ -91,14 +101,33 @@ def _pool_leatherworker():
                      if i.stat_bonuses and "Stealth" in i.stat_bonuses and not i.cursed]
     return leather_armor + [i for i in ACCESSORY_ITEMS if not i.cursed]
 
+def _pool_mage():
+    from data.spells import SPELLS
+    pool = []
+    # Mage merchant reliably stocks mid and advanced grimtotems
+    mid_chance      = 0.60
+    advanced_chance = 0.30
+    from data.spells import SPELLS as _SP
+    for gt in GRIMTOTEM_ITEMS:
+        spell = _SP.get(gt.spell_name, {})
+        tier  = spell.get("tier", "basic")
+        chance = {"basic": 0.80, "mid": mid_chance, "advanced": advanced_chance}.get(tier, 0.5)
+        if random.random() < chance:
+            pool.append(gt)
+    if not pool:   # fallback — always has something
+        pool = [GRIMTOTEM_ITEMS[0]]
+    return pool
+
+
 MERCHANT_TYPES = [
     # (type_label, tagline, pool_fn, leading_skill)
     ("Blacksmith",        "Soot-stained hands, straight talk, sharp steel.",     _pool_blacksmith,        "Martial"),
     ("Apothecary",        "Herbs and remedies for every road ailment.",           _pool_apothecary,        "Magic"),
-    ("Librarian",         "Quiet, watchful, and oddly well-informed.",            _pool_librarian,         "Dungeoneering"),
+    ("Librarian",         "Quiet, watchful — lore texts and possibility of finding tomes.",  _pool_librarian, "Dungeoneering"),
     ("Survival Trader",   "Rations, rope, and everything the road demands.",      _pool_survival,          "Survival"),
     ("Dungeoneering Co.", "Lanterns, picks, and maps of the unseen places.",      _pool_dungeoneering,     "Dungeoneering"),
     ("Leatherworker",     "Soft goods for those who prefer to stay unnoticed.",   _pool_leatherworker,     "Stealth"),
+    ("Mage Merchant",     "Grimoires, tomes, and spells for those with the gift.", _pool_mage,              "Magic"),
 ]
 
 
@@ -193,6 +222,30 @@ def use_potion(player: Player, potion, state: dict) -> str:
         return f"You study the {potion.name}. Nearby locations will be easier to find."
     if effect == "torch":
         return f"You light the {potion.name}. The dark pulls back a little."
+    if effect == "heal_35":
+        before = player.hp
+        player.heal(35)
+        gained = player.hp - before
+        return f"You eat the {potion.name}. +{gained} HP."
+    if effect == "heal_40":
+        before = player.hp
+        player.heal(40)
+        gained = player.hp - before
+        return f"You eat the {potion.name}. +{gained} HP."
+    if effect == "mushroom_wild":
+        before_hp = player.hp
+        player.heal(15)
+        player.restore_mana(10)
+        gained_hp = player.hp - before_hp
+        return f"You eat the {potion.name}. +{gained_hp} HP, +10 Mana."
+    if effect == "berries_unknown":
+        if random.random() < 0.20:
+            player.take_damage(15)
+            return f"You eat the {potion.name}. They were poisonous. -15 HP!"
+        before = player.hp
+        player.heal(10)
+        gained = player.hp - before
+        return f"You eat the {potion.name}. Tasted fine. +{gained} HP."
     return f"You use the {potion.name}."
 
 
@@ -311,14 +364,15 @@ def run_combat(player: Player, enemy) -> bool:
         message = f"{enemy.description}\n  You win the initiative — you strike first\!"
     else:
         # Enemy attacks before the player's first turn
-        e_dmg, e_move = enemy_attack(enemy, player, state)
+        e_dmg, e_move, e_is_spell = enemy_attack(enemy, player, state)
         player.take_damage(e_dmg)
+        e_verb = "casts" if e_is_spell else "attacks with"
         if e_dmg == 0:
-            message = f"{enemy.description}\n  {enemy.name} moves first but misses with {e_move}\!"
+            message = f"{enemy.description}\n  {enemy.name} moves first — {e_move} (missed)"
         else:
             message = (
                 f"{enemy.description}\n"
-                f"  {enemy.name} moves first\! {e_move} hits for "
+                f"  {enemy.name} moves first\! {e_verb} {e_move} — "
                 f"{C.BRED}{e_dmg}{C.RESET} damage."
             )
         beep("hit")
@@ -418,7 +472,7 @@ def run_combat(player: Player, enemy) -> bool:
 
             sname  = spell_names[sc - 1]
             spell  = available[sname]
-            cost   = spell["cost"]
+            cost   = max(0, spell["cost"] - player.mana_discount)
 
             if not player.spend_mana(cost):
                 message = (
@@ -486,13 +540,14 @@ def run_combat(player: Player, enemy) -> bool:
 
         # ── Enemy counter-attack ──────────────────────────────────────────────
         if action_taken and enemy.is_alive() and player.is_alive():
-            e_dmg, e_move = enemy_attack(enemy, player, state)
+            e_dmg, e_move, e_is_spell = enemy_attack(enemy, player, state)
             player.take_damage(e_dmg)
+            e_verb = "casts" if e_is_spell else "retaliates with"
             if e_dmg == 0:
-                message += f"\n  {enemy.name} attacks with {e_move}\! (missed)"
+                message += f"\n  {enemy.name} {e_verb} {e_move}\! (missed)"
             else:
                 message += (
-                    f"\n  {enemy.name} retaliates with {e_move} "
+                    f"\n  {enemy.name} {e_verb} {e_move} "
                     f"for {C.BRED}{e_dmg}{C.RESET} damage."
                 )
             beep("hit")
@@ -547,6 +602,76 @@ def loot_screen(player: Player, enemy):
 #   EQUIPMENT SCREEN
 # ════════════════════════════════════════════════════════════════
 
+def read_grimtotem(player: Player, item) -> bool:
+    """
+    Let the player read a grimtotem and decide whether to learn the spell.
+    Returns True if the spell was learned (item should be removed from inventory).
+    """
+    from data.spells import SPELLS
+    spell_name = item.spell_name
+    spell      = SPELLS.get(spell_name)
+    if not spell:
+        print(f"\n  {C.BRED}This tome is unreadable.{C.RESET}")
+        pause()
+        return False
+
+    clear()
+    title_screen(f"GRIMTOTEM — {item.name.upper()}")
+    print()
+    print(f"  {C.BYELLOW}{spell_name}{C.RESET}")
+    print(f"  {C.DIM}{spell['description']}{C.RESET}")
+    print()
+    hr("─")
+    print()
+    for line in spell["lore"].split("\n"):
+        typewrite(line)
+        print()
+    print()
+    hr("─")
+    print()
+
+    # Check if already known
+    if spell_name in player.learned_spells:
+        print(f"  {C.BBLACK}You already know this spell. The words offer nothing new.{C.RESET}")
+        pause()
+        return False
+
+    # Check Magic requirement
+    if player.skill("Magic") < spell["require_magic"]:
+        print(f"  {C.BRED}Your Magic ({player.skill('Magic')}) is too low to attempt this spell.")
+        print(f"  Requires: {spell['require_magic']}.{C.RESET}")
+        print(f"  {C.DIM}The words shimmer, then blur. Perhaps in time.{C.RESET}")
+        pause()
+        return False
+
+    options = [
+        f"{C.BGREEN}Yes — commit it to memory{C.RESET}",
+        f"{C.BBLACK}No, this reads like gibberish{C.RESET}",
+    ]
+    choice = prompt_choice(options, "Does this magic resonate with you?")
+    if choice == 1:
+        player.learned_spells.append(spell_name)
+        # Add to journal
+        tier_label = spell["tier"].capitalize()
+        entry = (
+            f"[GRIMTOTEM LEARNED: {spell_name}]  ({tier_label})\n"
+            f"{spell['description']}\n\n"
+            + spell["lore"]
+        )
+        if entry not in player.journal:
+            player.journal.append(entry)
+        play_melody("journal_entry")
+        print()
+        print(f"  {C.BGREEN}You commit the spell to memory. It is yours now.{C.RESET}")
+        print(f"  {C.DIM}The grimtotem crumbles to ash in your hands.{C.RESET}")
+        pause()
+        return True
+    else:
+        print(f"\n  {C.DIM}You close the tome. The words meant nothing to you today.{C.RESET}")
+        pause()
+        return False
+
+
 def equip_screen(player: Player):
     """Let the player equip or unequip items from their inventory."""
     SLOT_LABELS = {
@@ -578,8 +703,9 @@ def equip_screen(player: Player):
                 print(f"  {C.BCYAN}{label:<10}{C.RESET}  {C.BBLACK}— empty —{C.RESET}")
 
         # ── Build option list ─────────────────────────────────────────────
-        equippable = [i for i in player.inventory
-                      if i.item_type in ("weapon", "armor", "ring", "necklace")]
+        equippable  = [i for i in player.inventory
+                       if i.item_type in ("weapon", "armor", "ring", "necklace")]
+        grimtotems  = [i for i in player.inventory if i.item_type == "grimtotem"]
         equipped_filled = [s for s in SLOT_ORDER if player.equipped.get(s)]
 
         options = []
@@ -599,6 +725,13 @@ def equip_screen(player: Player):
             )
         n_equip = len(options)
 
+        for gt in grimtotems:
+            color  = RARITY_COLOR.get(gt.rarity, C.WHITE)
+            known  = gt.spell_name in player.learned_spells if gt.spell_name else False
+            suffix = f"  {C.BBLACK}(already known){C.RESET}" if known else ""
+            options.append(f"Read   {color}{gt.name}{C.RESET}  {C.DIM}[grimtotem]{C.RESET}{suffix}")
+        n_grimtotem = len(grimtotems)
+
         for slot in equipped_filled:
             item = player.equipped[slot]
             color = RARITY_COLOR.get(item.rarity, C.WHITE)
@@ -612,6 +745,14 @@ def equip_screen(player: Player):
         choice = prompt_choice(options, "Choose action")
         if choice == len(options):
             return
+
+        if choice > n_equip and choice <= n_equip + n_grimtotem:
+            # ── Read Grimtotem ────────────────────────────────────────────
+            gt = grimtotems[choice - n_equip - 1]
+            learned = read_grimtotem(player, gt)
+            if learned:
+                player.remove_item(gt)
+            continue
 
         if choice <= n_equip:
             # ── Equip ─────────────────────────────────────────────────────
@@ -1287,13 +1428,586 @@ def explore_event(player: Player, event):
 
 
 # ════════════════════════════════════════════════════════════════
+#   CAMPING, BUSHCRAFT & HUNTING
+# ════════════════════════════════════════════════════════════════
+
+# Food items usable for camping → (hp_restore, mana_restore, has_poison_risk)
+CAMP_FOOD = {
+    "Unknown Berries":  (10,  0,  True),
+    "Dried Fruit":      (20,  8,  False),
+    "Blueberries":      (20,  5,  False),
+    "Small Game Meat":  (20,  8,  False),
+    "Wild Mushrooms":   (15, 10,  False),
+    "Herb Bundle":      (25, 20,  False),
+    "Dried Rations":    (30, 15,  False),
+    "Dried Meat":       (35, 15,  False),
+    "Venison":          (40, 18,  False),
+    "Bear Meat":        (40, 18,  False),
+}
+
+# Item names that count as firewood for camping
+FIREWOOD_NAMES = {"Firewood"}
+
+
+def make_camp(player: Player):
+    """Resource-based camping. Costs 1 Firewood + 1 food item."""
+    clear()
+    title_screen("MAKE CAMP")
+
+    firewood = next((i for i in player.inventory if i.name in FIREWOOD_NAMES), None)
+    food     = next((i for i in player.inventory if i.name in CAMP_FOOD), None)
+
+    if not firewood:
+        print(f"\n  {C.BRED}You have no firewood. You cannot start a fire.{C.RESET}")
+        print(f"  {C.DIM}Buy firewood in a city, or try Bushcraft to forage some.{C.RESET}")
+        pause()
+        return
+
+    if not food:
+        print(f"\n  {C.BRED}You have nothing to eat. Camp would be a cold, hungry affair.{C.RESET}")
+        print(f"  {C.DIM}Stock up on rations before you travel, or try Bushcraft.{C.RESET}")
+        pause()
+        return
+
+    hp_gain, mana_gain, poison_risk = CAMP_FOOD[food.name]
+
+    print(f"\n  {C.DIM}You find a sheltered spot and build a fire.{C.RESET}")
+    print(f"  {C.DIM}Consuming: {C.RESET}{firewood.name}{C.DIM} + {C.RESET}{food.name}")
+    print()
+
+    player.remove_item(firewood)
+    player.remove_item(food)
+
+    if poison_risk and random.random() < 0.20:
+        player.take_damage(15)
+        print(f"  {C.BRED}The berries were poisonous. -15 HP.{C.RESET}")
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+    else:
+        player.heal(hp_gain)
+        player.restore_mana(mana_gain)
+        gain_str = f"+{hp_gain} HP"
+        if mana_gain:
+            gain_str += f", +{mana_gain} Mana"
+        print(f"  {C.BGREEN}You rest well through the night. {gain_str}.{C.RESET}")
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}  |  Mana: {player.mana}/{player.max_mana}{C.RESET}")
+        # Herb Bundle cures road ailments
+        if food.name == "Herb Bundle":
+            if player.road_poison > 0 or player.road_diseased:
+                player.road_poison   = 0
+                player.road_diseased = False
+                print(f"  {C.BGREEN}The herbs clear whatever ailed you. Poison and sickness fade.{C.RESET}")
+
+    pause()
+
+
+# ── Forage tables: item names by Survival tier, with weights ─────────────────
+FORAGE_TABLE = {
+    "low": [          # Survival < 20
+        ("Unknown Berries", 50),
+        ("Firewood",        30),
+        ("Wild Mushrooms",  15),
+        ("Blueberries",      5),
+    ],
+    "mid": [          # Survival 20-49
+        ("Firewood",        35),
+        ("Blueberries",     25),
+        ("Wild Mushrooms",  20),
+        ("Herb Bundle",     15),
+        ("Unknown Berries",  5),
+    ],
+    "high": [         # Survival 50-79
+        ("Firewood",        28),
+        ("Blueberries",     22),
+        ("Wild Mushrooms",  20),
+        ("Herb Bundle",     18),
+        ("Nightshade",      12),
+    ],
+    "expert": [       # Survival 80+
+        ("Herb Bundle",     28),
+        ("Firewood",        22),
+        ("Blueberries",     20),
+        ("Nightshade",      18),
+        ("Wild Mushrooms",  12),
+    ],
+}
+
+
+def _do_forage(player: Player):
+    """Attempt foraging. Success chance and quality both scale with Survival."""
+    from data.items import ITEM_LOOKUP as _LOOKUP
+    survival       = player.skill("Survival")
+    success_chance = 35 + survival * 0.5   # 35% base → up to 85%
+
+    clear()
+    title_screen("FORAGING")
+    print(f"  {C.DIM}You move quietly through the undergrowth...{C.RESET}")
+    time.sleep(1.0)
+    print()
+
+    if random.random() * 100 > success_chance:
+        player.days_elapsed += 1
+        player.road_total   += 1   # journey extends by one step
+        print(f"  {C.BBLACK}Your time spent foraging was unsuccessful.")
+        print(f"  It has since grown dark. Your journey extends a day...{C.RESET}")
+        pause()
+        return
+
+    # Determine quality tier
+    if survival < 20:
+        tier      = "low"
+        qual_msg  = f"  {C.DIM}You find something. Hard to say exactly what.{C.RESET}"
+    elif survival < 50:
+        tier      = "mid"
+        qual_msg  = f"  {C.DIM}You read the landscape well enough to find something useful.{C.RESET}"
+    elif survival < 80:
+        tier      = "high"
+        qual_msg  = f"  {C.BGREEN}You know this terrain. You move efficiently and find good yield.{C.RESET}"
+    else:
+        tier      = "expert"
+        qual_msg  = f"  {C.BGREEN}The wilderness gives up its secrets to you readily.{C.RESET}"
+
+    print(qual_msg)
+    print()
+
+    table       = FORAGE_TABLE[tier]
+    names, wts  = zip(*table)
+    found_name  = random.choices(names, weights=wts, k=1)[0]
+    found_item  = _LOOKUP.get(found_name)
+
+    if found_item:
+        if player.can_carry():
+            player.add_item(found_item)
+            print(f"  {C.BGREEN}You find: {found_name}{C.RESET}")
+            print(f"  {C.DIM}{found_item.description}{C.RESET}")
+        else:
+            print(f"  {C.BYELLOW}You found {found_name} but your pack is full.{C.RESET}")
+    pause()
+
+
+# ── Hunting ───────────────────────────────────────────────────────────────────
+# (name, desc, min_combined_avg, meat, pelt, bone_chance, miss_dmg, death_risk)
+HUNT_ANIMALS = [
+    ("Squirrel",  "A small, quick creature. Easy prey.",             0,  "Small Game Meat", "Squirrel Pelt", 0.05,  0,  0.00),
+    ("Fox",       "Lean and clever. Alert ears.",                   20,  "Small Game Meat", "Fox Pelt",      0.10,  5,  0.00),
+    ("Owl",       "Silent-winged and sharp-eyed.",                  20,  "Small Game Meat", "Squirrel Pelt", 0.08,  5,  0.00),
+    ("Badger",    "Stocky and aggressive when cornered.",           30,  "Dried Meat",      "Fox Pelt",      0.15, 10,  0.00),
+    ("Deer",      "Graceful. Alert to every sound.",                40,  "Venison",         "Deer Pelt",     0.20, 12,  0.00),
+    ("Elk",       "Towering. Dangerous when cornered.",             55,  "Venison",         "Elk Pelt",      0.25, 20,  0.05),
+    ("Bear",      "Massive. Do not miss.",                          70,  "Bear Meat",       "Bear Pelt",     0.40, 35,  0.15),
+    ("Dire Wolf", "A beast beyond natural proportions.",            80,  "Bear Meat",       "Bear Pelt",     0.45, 40,  0.25),
+    ("Wyvern",    "A flying terror. Wings like thunder.",           90,  "Bear Meat",       "Mystical Fang", 0.60, 60,  0.45),
+    ("Dragon",    "Ancient. Absolute. You should not be here.",    100,  "Bear Meat",       "Mystical Fang", 0.80, 999, 0.85),
+]
+
+
+def _get_huntable_animals(player):
+    avg       = (player.skill("Stealth") + player.skill("Survival")) / 2
+    available = [a for a in HUNT_ANIMALS if avg >= a[2]]
+    return available if available else [HUNT_ANIMALS[0]]
+
+
+def hunting_minigame(player):
+    from data.items import ITEM_LOOKUP as _LOOKUP
+
+    available = _get_huntable_animals(player)
+    weights   = [max(1, len(available) - i) for i in range(len(available))]
+    animal    = random.choices(available, weights=weights, k=1)[0]
+    a_name, a_desc, _, meat_name, pelt_name, bone_chance, miss_dmg, death_risk = animal
+
+    stealth  = player.skill("Stealth")
+    survival = player.skill("Survival")
+    martial  = player.skill("Martial")
+
+    kill_chance = 10 + (stealth + survival) / 5
+    injury_risk = max(0.10, (40 - survival * 0.3) / 100)
+
+    clear()
+    title_screen(f"HUNTING — {a_name.upper()}")
+    print(f"\n  {C.DIM}You spot a {a_name} in the undergrowth.{C.RESET}")
+    print(f"  {C.DIM}{a_desc}{C.RESET}")
+    print()
+    print(f"  {C.BYELLOW}Starting kill chance: {kill_chance:.0f}%{C.RESET}   "
+          f"{C.DIM}Injury risk on miss: {injury_risk*100:.0f}%{C.RESET}")
+    if death_risk > 0:
+        print(f"  {C.BRED}Lethal retaliation risk: {death_risk*100:.0f}%{C.RESET}")
+    pause()
+
+    round_log = []
+    forced    = False
+
+    for round_num in range(1, 4):
+        if kill_chance >= 85:
+            forced = True
+            break
+
+        clear()
+        title_screen(f"HUNTING — {a_name.upper()}  (Round {round_num}/3)")
+        print(f"  {C.DIM}{a_desc}{C.RESET}")
+        print()
+        if round_log:
+            for line in round_log:
+                print(f"  {line}")
+            print()
+        print(f"  {C.BYELLOW}Kill chance: {kill_chance:.0f}%   "
+              f"Injury risk: {injury_risk*100:.0f}%{C.RESET}")
+        print()
+
+        options = [
+            f"Move silently       {C.DIM}[Stealth: {stealth}]  — close the distance{C.RESET}",
+            f"Track and position  {C.DIM}[Survival: {survival}]  — read its movement{C.RESET}",
+            f"Take the shot now   {C.DIM}[Martial: {martial}]{C.RESET}",
+            f"Let it go           {C.DIM}(abandon the hunt){C.RESET}",
+        ]
+        choice = prompt_choice(options, "Your approach")
+
+        if choice == 4:
+            print(f"\n  {C.DIM}You lower your bow. The {a_name} vanishes into the trees.{C.RESET}")
+            pause()
+            return
+
+        if choice == 3:
+            break
+
+        if choice == 1:
+            diff = random.randint(10, 25)
+            roll = random.randint(1, 20) + stealth // 4
+            if roll >= diff:
+                gain        = 5 + stealth // 10
+                kill_chance = min(85, kill_chance + gain)
+                round_log.append(
+                    f"{C.BGREEN}✓ You close the distance silently. "
+                    f"+{gain:.0f}% kill chance → {kill_chance:.0f}%{C.RESET}")
+            else:
+                round_log.append(f"{C.BRED}✗ A twig snaps. The {a_name} tenses but holds.{C.RESET}")
+
+        elif choice == 2:
+            diff = random.randint(10, 22)
+            roll = random.randint(1, 20) + survival // 4
+            if roll >= diff:
+                gain        = 3 + survival // 15
+                kill_chance = min(85, kill_chance + gain)
+                inj_drop    = survival // 20
+                injury_risk = max(0.05, injury_risk - inj_drop / 100)
+                round_log.append(
+                    f"{C.BGREEN}✓ You read its pattern. "
+                    f"+{gain:.0f}% kill chance → {kill_chance:.0f}%  "
+                    f"Injury risk ↓{C.RESET}")
+            else:
+                round_log.append(f"{C.BRED}✗ The animal shifts. You wait it out.{C.RESET}")
+
+        if kill_chance >= 85:
+            forced = True
+
+    # Forced shot / final decision
+    clear()
+    title_screen(f"HUNTING — {a_name.upper()}")
+    for line in round_log:
+        print(f"  {line}")
+    print()
+    if forced and kill_chance >= 85:
+        print(f"  {C.BGREEN}You are close enough to count the breaths between its ribs.{C.RESET}")
+        print(f"  {C.BYELLOW}This is as good a chance as you'll get.{C.RESET}")
+    else:
+        print(f"  {C.BYELLOW}Time is running out. You must decide now.{C.RESET}")
+    print()
+
+    options = [
+        f"Take the shot   {C.DIM}[Martial: {martial}]  Kill chance: {kill_chance:.0f}%{C.RESET}",
+        f"Let it go       {C.DIM}(walk away){C.RESET}",
+    ]
+    if prompt_choice(options, "") == 2:
+        print(f"\n  {C.DIM}You lower your bow. Some hunts are not meant to end.{C.RESET}")
+        pause()
+        return
+
+    # The shot
+    clear()
+    title_screen(f"THE SHOT — {a_name.upper()}")
+    print(f"  {C.DIM}Kill chance: {kill_chance:.0f}%{C.RESET}")
+    print()
+    time.sleep(0.8)
+
+    difficulty = max(4, 22 - int(kill_chance // 5))
+    shot_roll  = random.randint(1, 20) + martial // 4
+
+    if shot_roll >= difficulty:
+        play_melody("victory")
+        print(f"  {C.BGREEN}The arrow finds its mark. The {a_name} falls.{C.RESET}")
+        print()
+
+        yields     = []
+        meat_count = 1 + (survival // 40)
+        meat_item  = _LOOKUP.get(meat_name)
+        for _ in range(meat_count):
+            if meat_item and player.can_carry():
+                player.add_item(meat_item)
+                yields.append(meat_name)
+
+        pelt_chance = min(0.90, 0.20 + survival * 0.007)
+        if random.random() < pelt_chance:
+            pelt_item = _LOOKUP.get(pelt_name)
+            if pelt_item and player.can_carry():
+                player.add_item(pelt_item)
+                yields.append(pelt_name)
+
+        if random.random() < bone_chance:
+            if a_name in ("Wyvern", "Dragon"):
+                bone_pool = ["Mystical Fang", "Dragon Hide"]
+            else:
+                bone_pool = ["Bone Tusk", "Bear Claw", "Wolf Tooth"]
+            bitem = _LOOKUP.get(random.choice(bone_pool))
+            if bitem and player.can_carry():
+                player.add_item(bitem)
+                yields.append(bitem.name)
+
+        if yields:
+            print(f"  {C.BYELLOW}You salvage:{C.RESET}")
+            for y in sorted(set(yields)):
+                cnt = yields.count(y)
+                print(f"    {C.DIM}{'x'+str(cnt)+' ' if cnt > 1 else ''}{y}{C.RESET}")
+        else:
+            print(f"  {C.DIM}Your pack is full — you carry nothing away.{C.RESET}")
+
+    else:
+        print(f"  {C.BRED}The shot goes wide. The {a_name} bolts.{C.RESET}")
+        print()
+        time.sleep(0.8)
+
+        if death_risk > 0 and random.random() < death_risk:
+            print(f"  {C.BRED}{C.BOLD}The {a_name} turns on you\!{C.RESET}")
+            time.sleep(0.6)
+            if a_name == "Dragon":
+                print(f"  {C.BRED}A torrent of flame engulfs you completely.{C.RESET}")
+                player.take_damage(player.hp)
+            else:
+                player.take_damage(miss_dmg)
+                print(f"  {C.BRED}It mauls you savagely. -{miss_dmg} HP.  "
+                      f"HP: {player.hp}/{player.max_hp}{C.RESET}")
+        elif miss_dmg > 0 and random.random() < injury_risk:
+            player.take_damage(miss_dmg)
+            print(f"  {C.BRED}As it flees it catches you with a glancing blow. "
+                  f"-{miss_dmg} HP.{C.RESET}")
+            print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+        else:
+            print(f"  {C.DIM}You escape without injury.{C.RESET}")
+
+    pause()
+
+
+def bushcraft_screen(player):
+    clear()
+    title_screen("BUSHCRAFT")
+
+    survival = player.skill("Survival")
+    has_bow  = (
+        any(getattr(i, "weapon_type", None) == "bow" for i in player.inventory)
+        or getattr(player.equipped.get("weapon"), "weapon_type", None) == "bow"
+    )
+
+    print(f"  {C.DIM}Survival: {survival}   "
+          f"Forage success: ~{min(85, int(35 + survival * 0.5))}%{C.RESET}")
+    print()
+
+    options = ["Forage for resources"]
+    if has_bow:
+        options.append("Hunt for game  (bow ready)")
+    options.append(f"{C.BBLACK}\u2190 Back to road{C.RESET}")
+
+    choice = prompt_choice(options, "What will you do?")
+
+    if choice == len(options):
+        return
+    if choice == 1:
+        _do_forage(player)
+    elif has_bow and choice == 2:
+        hunting_minigame(player)
+
+
+
+# ════════════════════════════════════════════════════════════════
+#   WILDERNESS EVENTS
+# ════════════════════════════════════════════════════════════════
+
+HERMIT_LORE = [
+    "The road south bends toward Caldervast. Don't linger at the crossroads after dark — something there listens.",
+    "I've walked these woods for forty years. The silence has changed. It used to mean peace.",
+    "There's a merchant in Ashenvale who smiles too wide. Count your fingers after you shake his hand.",
+    "The old castle beyond the ridge — men used to dare each other to spend the night. They stopped doing that.",
+    "Ravens don't fly at night. If you see one after dusk, turn back.",
+    "A boy passed through here three days ago. Running east. He didn't say from what.",
+    "The river downstream runs clear but tastes of iron. Has done for a season now.",
+    "Some roads weren't built for trade. They were built to keep something in.",
+    "I found a coin near the standing stones last spring. Old face on it. No king I've ever known.",
+    "The stars have been wrong lately. Not wrong enough for most to notice. But wrong.",
+]
+
+WILDERNESS_BASE_CHANCE = 0.18   # per uneventful step
+WILDERNESS_SKILL_REDUCE = 0.0012  # each Survival point shaves this off
+
+
+def get_wilderness_chance(player: Player) -> float:
+    return max(0.06, WILDERNESS_BASE_CHANCE - player.skill("Survival") * WILDERNESS_SKILL_REDUCE)
+
+
+def wilderness_event(player: Player):
+    """Roll and fire a random wilderness event. Modifies player state in-place."""
+    etype = random.choice(["snake", "disease", "weather", "stranger"])
+    clear()
+    print()
+    if etype == "snake":
+        _we_snake(player)
+    elif etype == "disease":
+        _we_disease(player)
+    elif etype == "weather":
+        _we_weather(player)
+    else:
+        _we_stranger(player)
+
+
+def _we_snake(player: Player):
+    section("SNAKE BITE")
+    typewrite("A flash of movement near your boot — too late to fully react.")
+    print()
+    roll = random.randint(1, 20) + player.skill("Survival") // 5
+    if roll >= 13:
+        print(f"  {C.BGREEN}You catch the movement just in time and leap back. The snake retreats into the undergrowth.{C.RESET}")
+    else:
+        dmg = random.randint(15, 25)
+        player.take_damage(dmg)
+        beep("hit")
+        print(f"  {C.BRED}Fangs catch your ankle. You wrench free but the damage is done. −{dmg} HP.{C.RESET}")
+        if random.random() < 0.35:
+            player.road_poison = 2
+            print(f"  {C.BRED}Your leg goes numb. You've been poisoned.{C.RESET}")
+            print(f"  {C.DIM}(−5 HP per road step for 2 steps — cure with Herb Bundle at camp){C.RESET}")
+    print()
+    pause("Press Enter to continue...")
+
+
+def _we_disease(player: Player):
+    section("ILL WIND")
+    typewrite("Something in the air — a rotting sweetness, a crawling unease. You feel it settle in your chest.")
+    print()
+    roll = random.randint(1, 20) + player.skill("Survival") // 5
+    if roll >= 12:
+        player.take_damage(5)
+        print(f"  {C.BYELLOW}You recognise the warning signs early and push through. −5 HP.{C.RESET}")
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+    else:
+        player.take_damage(20)
+        player.road_diseased = True
+        beep("hit")
+        print(f"  {C.BRED}You don't catch it in time. −20 HP and the sickness takes hold.{C.RESET}")
+        print(f"  {C.DIM}(−5 HP per road step until you reach a town — cure by camping with Herb Bundle){C.RESET}")
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+    print()
+    pause("Press Enter to continue...")
+
+
+def _we_weather(player: Player):
+    storm = random.choice([
+        "A sudden storm rolls in off the hills.",
+        "Thick fog descends without warning.",
+        "Sleet hammers the road from nowhere.",
+    ])
+    section("WEATHER")
+    typewrite(storm + " The road ahead becomes treacherous.")
+    print()
+    roll = random.randint(1, 20) + player.skill("Survival") // 5
+    if roll >= 11:
+        player.road_total += 1
+        print(f"  {C.BYELLOW}You read the signs early and find what cover you can — but the delay costs you a day.{C.RESET}")
+        print(f"  {C.DIM}(+1 road step added){C.RESET}")
+    else:
+        player.road_total += 2
+        dmg = 10
+        player.take_damage(dmg)
+        beep("hit")
+        print(f"  {C.BRED}Caught in the open, you suffer {dmg} HP of exposure. Your journey is pushed back significantly.{C.RESET}")
+        print(f"  {C.DIM}(+2 road steps added){C.RESET}")
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+    print()
+    pause("Press Enter to continue...")
+
+
+def _we_stranger(player: Player):
+    archetype = random.choice(["lost_traveller", "hermit", "shady_figure"])
+
+    if archetype == "lost_traveller":
+        section("TRAVELLER")
+        typewrite("A figure on the road ahead — weary pack, no obvious destination. They slow as you approach.")
+        print()
+        roll = random.randint(1, 20) + player.skill("Speechcraft") // 5
+        if roll >= 8:
+            gold = random.randint(5, 15)
+            player.gold += gold
+            print(f"  {C.BGREEN}You exchange a few words. They're grateful for the company and press coins into your palm before parting.{C.RESET}")
+            print(f"  {C.BYELLOW}+{gold}gp{C.RESET}")
+        else:
+            print(f"  {C.DIM}They glance at you briefly and walk on without a word. Ships passing.{C.RESET}")
+        print()
+        pause("Press Enter to continue...")
+
+    elif archetype == "hermit":
+        section("THE HERMIT")
+        typewrite("An old figure sits by a dead fire off the side of the road, watching you approach without moving.")
+        print()
+        roll = random.randint(1, 20) + player.skill("Speechcraft") // 5
+        if roll >= 10:
+            print(f"  {C.BGREEN}They study you for a long moment, then reach into their bundle.{C.RESET}")
+            print(f'  {C.DIM}"Take this. The road ahead will ask more of you than you think."{C.RESET}')
+            loot = generate_loot(bias="uncommon")
+            color = RARITY_COLOR.get(loot.rarity, C.WHITE)
+            if player.can_carry():
+                player.add_item(loot)
+                print(f"  Found: {color}{C.BOLD}{loot.name}{C.RESET}")
+            else:
+                print(f"  {C.BYELLOW}They offer you something but your pack is full. You cannot carry it.{C.RESET}")
+            unused = [l for l in HERMIT_LORE if l not in player.journal]
+            if unused:
+                lore = random.choice(unused)
+                player.journal.append(lore)
+                play_melody("journal_entry")
+                print()
+                hr("─")
+                print(f"  {C.BYELLOW}❖ Journal updated{C.RESET}")
+                print()
+                typewrite(lore)
+                print()
+                hr("─")
+        else:
+            print(f"  {C.DIM}They watch you pass without a word. Their eyes stay on you until you've rounded the bend.{C.RESET}")
+        print()
+        pause("Press Enter to continue...")
+
+    else:  # shady_figure
+        section("STRANGER")
+        typewrite("Someone is standing in the middle of the road. Hood pulled low. Watching you come.")
+        print()
+        surv_roll = random.randint(1, 20) + player.skill("Survival") // 5
+        if surv_roll >= 10:
+            print(f"  {C.BYELLOW}Something is wrong — your instincts say don't stop. You give them a wide berth and keep moving.{C.RESET}")
+            print()
+            pause("Press Enter to continue...")
+            return
+        speech_roll = random.randint(1, 20) + player.skill("Speechcraft") // 5
+        if speech_roll >= 13:
+            print(f"  {C.BGREEN}You meet their eye and hold it. They read something in your face and step aside without a word.{C.RESET}")
+        else:
+            loss = random.randint(10, 25)
+            player.gold = max(0, player.gold - loss)
+            beep("hit")
+            print(f"  {C.BRED}A blade appears from the cloak. \"Your coin or worse.\" You hand it over.{C.RESET}")
+            print(f"  {C.BYELLOW}−{loss}gp{C.RESET}")
+        print()
+        pause("Press Enter to continue...")
+
+
+# ════════════════════════════════════════════════════════════════
 #   ROAD LOOP
 # ════════════════════════════════════════════════════════════════
 
-CAMP_LIMIT = 2   # maximum camps allowed per road segment
-
-def road_loop(player: Player):
-    """Handle travel steps, encounters, and arrival."""
+def road_loop(player):
     while player.on_road:
         dest_name  = CITIES[player.road_destination].name
         road_biome = player.road_biome
@@ -1303,57 +2017,79 @@ def road_loop(player: Player):
         print()
         section("ROAD")
 
-        camps_left  = CAMP_LIMIT - player.road_camps
-        camp_plural = "s" if camps_left > 1 else ""
-        if camps_left > 0:
-            camp_label = f"Make camp  {C.DIM}(rest — restore 30 HP, {camps_left} camp{camp_plural} left){C.RESET}"
+        has_fire = any(i.name in FIREWOOD_NAMES for i in player.inventory)
+        has_food = any(i.name in CAMP_FOOD for i in player.inventory)
+        if has_fire and has_food:
+            camp_label = f"Make camp      {C.DIM}(costs 1 Firewood + 1 food item){C.RESET}"
         else:
-            camp_label = f"{C.BBLACK}Make camp  (no camps remaining this road){C.RESET}"
+            missing = []
+            if not has_fire: missing.append("firewood")
+            if not has_food: missing.append("food")
+            camp_label = (f"{C.BBLACK}Make camp      "
+                          f"(missing: {', '.join(missing)}){C.RESET}")
 
         options = [
-            f"Press on      {C.DIM}(continue towards {dest_name}){C.RESET}",
+            f"Press on       {C.DIM}(continue towards {dest_name}){C.RESET}",
             camp_label,
-            f"Gear          {C.DIM}(manage equipped items on the road){C.RESET}",
-            f"Journal       {C.DIM}({len(player.journal)} entr{'y' if len(player.journal) == 1 else 'ies'}){C.RESET}",
-            f"Turn back     {C.DIM}(return to origin city){C.RESET}",
+            f"Bushcraft      {C.DIM}(forage or hunt — governed by Survival){C.RESET}",
+            f"Gear           {C.DIM}(manage equipped items){C.RESET}",
+            f"Journal        {C.DIM}({len(player.journal)} entr{'y' if len(player.journal) == 1 else 'ies'}){C.RESET}",
+            f"Turn back      {C.DIM}(return to origin city){C.RESET}",
         ]
         choice = prompt_choice(options)
 
-        # ── Camp ─────────────────────────────────────────────────────────
         if choice == 2:
-            if player.road_camps >= CAMP_LIMIT:
-                print(f"\n  {C.BRED}You've already camped twice on this stretch. Press on.{C.RESET}")
-                time.sleep(1.2)
-                continue
-            player.road_camps += 1
-            player.heal(30)
-            player.restore_mana(15)
-            print(f"\n  {C.BGREEN}You make camp and rest. +30 HP, +15 Mana. "
-                  f"({player.road_camps}/{CAMP_LIMIT} camps used){C.RESET}")
-            time.sleep(1.2)
+            make_camp(player)
             continue
 
-        # ── Gear on road ─────────────────────────────────────────────────
         if choice == 3:
+            bushcraft_screen(player)
+            if not player.is_alive():
+                game_over(player)
+                return
+            continue
+
+        if choice == 4:
             equip_screen(player)
             continue
 
-        # ── Journal on road ──────────────────────────────────────────────
-        if choice == 4:
+        if choice == 5:
             show_journal(player)
             continue
 
-        # ── Turn back ────────────────────────────────────────────────────
-        if choice == 5:
+        if choice == 6:
             abort_travel(player)
+            player.road_poison   = 0
+            player.road_diseased = False
             print(f"\n  {C.DIM}You turn back.{C.RESET}")
             time.sleep(0.8)
             return
 
-        # ── Press on ─────────────────────────────────────────────────────
         arrived, enemy, event = take_road_step(player)
 
+        # ── Status effect drain (poison / disease) ────────────────────────────
+        if player.road_poison > 0:
+            player.take_damage(5)
+            player.road_poison -= 1
+            _ps = "s" if player.road_poison \!= 1 else ""
+            rem = f"{player.road_poison} step{_ps} remaining" if player.road_poison > 0 else "poison has faded"
+            print(f"  {C.BRED}Poison courses through you. −5 HP. ({rem}){C.RESET}")
+            time.sleep(0.6)
+            if not player.is_alive():
+                game_over(player)
+                return
+
+        if player.road_diseased:
+            player.take_damage(5)
+            print(f"  {C.BRED}The sickness weighs on you. −5 HP.{C.RESET}")
+            time.sleep(0.6)
+            if not player.is_alive():
+                game_over(player)
+                return
+
         if arrived:
+            player.road_poison   = 0
+            player.road_diseased = False
             city = CITIES[player.current_city]
             play_melody("city_arrive")
             show_world_map(player)
@@ -1364,28 +2100,33 @@ def road_loop(player: Player):
         if enemy:
             clear()
             print()
-            print(f"  {C.BRED}{C.BOLD}A {enemy.name} blocks your path\!{C.RESET}")
+            print(f"  {C.BRED}{C.BOLD}A {enemy.name} blocks your path\\!{C.RESET}")
             print(f"  {C.DIM}{enemy.description}{C.RESET}")
             time.sleep(1.2)
-
             won = run_combat(player, enemy)
-
             if not player.is_alive():
                 game_over(player)
                 return
-
             if won:
                 loot_screen(player, enemy)
 
         if event:
             explore_event(player, event)
 
+        # ── Wilderness event (only on fully uneventful steps) ─────────────────
+        if not arrived and not enemy and not event:
+            if random.random() < get_wilderness_chance(player):
+                wilderness_event(player)
+                if not player.is_alive():
+                    game_over(player)
+                    return
+
 
 # ════════════════════════════════════════════════════════════════
 #   GAME OVER
 # ════════════════════════════════════════════════════════════════
 
-def game_over(player: Player):
+def game_over(player):
     clear()
     title_screen("YOU HAVE FALLEN")
     print(f"  {player.name}'s journey has ended.")
@@ -1409,7 +2150,7 @@ def main():
     title_screen("THE MERCHANT'S ROAD")
     print(f"  {C.DIM}Three cities. Open roads. One market worth mastering.{C.RESET}")
     print()
-    print(f"  {C.BBLACK}Alpha - World v1.3  |  Merchant system: Phase 2{C.RESET}")
+    print(f"  {C.BBLACK}Alpha - World v1.4  |  Camping & Bushcraft update{C.RESET}")
     print()
     pause("Press Enter to begin...")
     start_ambient_loop()

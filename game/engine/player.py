@@ -63,11 +63,18 @@ class Player:
     road_biome: str                 = "forest"
     road_camps: int                 = 0   # camps used this road segment (max 2)
 
+    # Road status effects
+    road_poison: int                = 0   # turns of poison remaining (5 HP per step)
+    road_diseased: bool             = False  # disease active — 5 HP drain per step until town
+
     # Time
     days_elapsed: int               = 0
 
-    # Journal — stores lore texts discovered from cleared locations
+    # Journal — stores lore texts and grimtotem entries
     journal: List[str]              = field(default_factory=list)
+
+    # Spells — names of spells the player has learned via grimtotems
+    learned_spells: List[str]       = field(default_factory=list)
 
     # Road buffs
     map_bonus: bool                 = False   # active Adventurer's Map (+event chance)
@@ -96,10 +103,18 @@ class Player:
     def base_skill(self, name: str) -> int:
         return self.skills.get(name, 0)
 
-    # ── Max mana ─────────────────────────────────────────────────────────
+    # ── Max mana — tiered growth, faster at high Magic ───────────────────
     @property
     def max_mana(self) -> int:
-        return self.skill("Magic") * 2
+        m = self.skill("Magic")
+        if m <= 20:
+            return m * 2
+        elif m <= 50:
+            return 40 + (m - 20) * 3
+        elif m <= 80:
+            return 130 + (m - 50) * 4
+        else:
+            return 250 + (m - 80) * 5
 
     # ── Defense ──────────────────────────────────────────────────────────
     @property
@@ -212,10 +227,38 @@ def _item_slot(item: Item) -> Optional[str]:
     }.get(item.item_type)
 
 
+def _assign_starting_spells(magic: int) -> List[str]:
+    """
+    Assign random starting spells based on Magic skill at character creation.
+    Only spells within the character's Magic threshold are eligible.
+    Prevents starting with nukes regardless of investment.
+    """
+    from data.spells import SPELLS
+    eligible = [
+        name for name, sp in SPELLS.items()
+        if sp["require_magic"] <= magic and sp["tier"] != "advanced"
+    ]
+    if magic < 15:
+        count = 0
+    elif magic < 35:
+        count = 1
+    elif magic < 55:
+        count = 2
+    elif magic < 75:
+        count = 3
+    elif magic < 95:
+        count = 4
+    else:
+        count = min(5, len(eligible))
+
+    import random
+    return random.sample(eligible, min(count, len(eligible)))
+
+
 def create_player(name: str, skill_allocations: Dict[str, int]) -> Player:
     total = sum(skill_allocations.values())
     if total > STARTING_POINTS:
         raise ValueError(f"Skill total {total} exceeds {STARTING_POINTS}.")
     p = Player(name=name, skills=dict(skill_allocations))
-    p.mana = p.max_mana   # initialise mana from Magic skill
-    return p
+    p.mana           = min(20, p.max_mana)   # starting mana capped at 20
+    p.learned_spells = _assign_starting_spells(p.skill("Magic"))

@@ -46,7 +46,8 @@ class Item:
     effect: Optional[str]                    = None
     lore: Optional[str]                      = None
     cursed: bool                             = False
-    curse_effect: Optional[str]              = None
+    curse_effect: Optional[str]             = None
+    spell_name: Optional[str]               = None   # grimtotems only
 
 
 # ── TRADE GOODS (raw materials, gems) ────────────────────────────────────────
@@ -146,6 +147,43 @@ SUPPLY_ITEMS = [
     Item("Lantern",            40, "uncommon", "consumable", "A hooded lantern. Reveals the unseen.",            [], effect="torch"),
 ]
 
+# ── HUNT YIELDS (meat, pelts, bones — from hunting minigame) ─────────────────
+HUNT_ITEMS = [
+    Item("Small Game Meat",  8,  "common",   "consumable", "Squirrel or fox, roasted on a stick. Restores 20 HP.",      [], effect="heal_20"),
+    Item("Dried Meat",       12, "common",   "consumable", "Smoked trail meat. Hearty road fare. Restores 35 HP.",      [], effect="heal_35"),
+    Item("Venison",          20, "uncommon", "consumable", "Fresh deer, dressed in the field. Restores 40 HP.",         [], effect="heal_40"),
+    Item("Bear Meat",        25, "uncommon", "consumable", "Dense, rich meat. A full belly. Restores 40 HP.",           [], effect="heal_40"),
+    Item("Squirrel Pelt",    10, "common",   "material",   "Soft and small. Furriers pay little for it.",               []),
+    Item("Fox Pelt",         28, "common",   "material",   "Russet fur. Decent trade value with leatherworkers.",       []),
+    Item("Deer Pelt",        50, "uncommon", "material",   "Supple hide. Leatherworkers prize it.",                     []),
+    Item("Elk Pelt",         80, "uncommon", "material",   "Thick and wide. Fine quality.",                             []),
+    Item("Bear Pelt",       130, "rare",     "material",   "Immense and dense. Worth real coin.",                       []),
+    Item("Bone Tusk",        35, "common",   "material",   "Curved bone from large game. Alchemists use these.",        []),
+    Item("Bear Claw",        45, "uncommon", "material",   "A large, hooked claw. Curio merchants pay well.",           []),
+    Item("Mystical Fang",   220, "rare",     "material",   "A fang from no natural creature. Glows faintly.",           []),
+]
+
+# ── GRIMTOTEMS (purchased from Librarian/Mage — learned via reading) ─────────
+# Basic (10–40g), Mid (60–150g), Advanced (200–400g)
+GRIMTOTEM_ITEMS = [
+    Item("Grimtotem of Frost",    20,  "common",   "grimtotem", "A slim tome bound in blue thread. Frost Bolt.",            [], spell_name="Frost Bolt"),
+    Item("Grimtotem of Shock",    15,  "common",   "grimtotem", "A singed pamphlet. Crackles faintly. Shock.",               [], spell_name="Shock"),
+    Item("Grimtotem of Fire",     70,  "uncommon", "grimtotem", "A heat-warped tome. Fireball.",                             [], spell_name="Fireball"),
+    Item("Grimtotem of Mending",  90,  "uncommon", "grimtotem", "Soft covers, gentle script. Healing Word.",                 [], spell_name="Healing Word"),
+    Item("Grimtotem of Shadows", 110,  "uncommon", "grimtotem", "Dark ink on dark pages. Shadow Step.",                      [], spell_name="Shadow Step"),
+    Item("Grimtotem of Draining",130,  "uncommon", "grimtotem", "Smells of old blood. Drain Life.",                          [], spell_name="Drain Life"),
+    Item("Grimtotem of the Arc", 280,  "rare",     "grimtotem", "Scorched. Bindings fused. Lightning Arc.",                  [], spell_name="Lightning Arc"),
+    Item("Grimtotem of Rending", 380,  "rare",     "grimtotem", "Black pages. No author listed. Soul Rend.",                 [], spell_name="Soul Rend"),
+]
+
+# ── FORAGE FINDS (from Bushcraft — quality scales with Survival) ──────────────
+FORAGE_ITEMS = [
+    Item("Unknown Berries",  3,  "common",   "consumable", "Unidentified wild berries. Eat at your own risk.",          [], effect="berries_unknown"),
+    Item("Blueberries",      8,  "common",   "consumable", "Wild blueberries. Fresh and nutritious. Restores 20 HP.",   [], effect="heal_20"),
+    Item("Wild Mushrooms",   10, "common",   "consumable", "Earthy forest mushrooms. Restores 15 HP and 10 Mana.",      [], effect="mushroom_wild"),
+    Item("Nightshade",       30, "uncommon", "material",   "Identified: highly toxic. Do NOT eat. Alchemists pay well.", []),
+]
+
 # ── LORE BOOKS (readable, sell for small amounts) ─────────────────────────────
 BOOK_ITEMS = [
     Item("The Merchant's Code",      15, "common",   "book",
@@ -187,6 +225,9 @@ ITEMS = (
     + POTION_ITEMS
     + SUPPLY_ITEMS
     + BOOK_ITEMS
+    + HUNT_ITEMS
+    + FORAGE_ITEMS
+    + GRIMTOTEM_ITEMS
 )
 
 ITEM_LOOKUP = {item.name: item for item in ITEMS}

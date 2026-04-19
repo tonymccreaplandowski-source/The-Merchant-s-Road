@@ -1,12 +1,17 @@
 """
 Enemy definitions.
-Stats are randomized on spawn within defined ranges — no two enemies are identical.
+Stats are randomized on spawn within defined ranges.
+
+enemy_type:
+  "combat"    — physical fighter only
+  "half_mage" — 35% chance per round to cast a spell instead of attacking
+  "mage"      — 65% chance to cast; lower physical stats, higher spell presence
 
 Armor types affect combat move effectiveness:
-  none    — all moves effective
-  cloth   — Slash effective, Bash okay, Pierce weak
+  none  — all moves effective
+  cloth — Slash effective, Bash okay, Pierce weak
   leather — Pierce effective, Slash okay, Bash okay
-  mail    — Bash effective, Pierce okay, Slash weak
+  mail  — Bash effective, Pierce okay, Slash weak
 """
 
 import random
@@ -26,6 +31,8 @@ class Enemy:
     description: str
     biomes: List[str]
     loot_bias: str
+    enemy_type: str        = "combat"
+    enemy_spells: List[str] = field(default_factory=list)
 
     def is_alive(self) -> bool:
         return self.hp > 0
@@ -45,6 +52,8 @@ ENEMY_TEMPLATES = [
         "description":    "A small, wiry goblin with a rusty blade and bad intentions.",
         "biomes":         ["forest", "desert", "mountain"],
         "loot_bias":      "common",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Road Bandit",
@@ -56,6 +65,8 @@ ENEMY_TEMPLATES = [
         "description":    "A desperate traveller turned criminal. Dangerous but beatable.",
         "biomes":         ["forest", "desert"],
         "loot_bias":      "common",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Forest Wolf",
@@ -67,6 +78,8 @@ ENEMY_TEMPLATES = [
         "description":    "A lean grey wolf hunting alone. Fast and relentless.",
         "biomes":         ["forest"],
         "loot_bias":      "uncommon",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Sand Scorpion",
@@ -78,6 +91,8 @@ ENEMY_TEMPLATES = [
         "description":    "An armoured desert predator. Its shell deflects most blades.",
         "biomes":         ["desert"],
         "loot_bias":      "uncommon",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Mountain Troll",
@@ -89,6 +104,8 @@ ENEMY_TEMPLATES = [
         "description":    "A hulking brute with skin like stone. Slow, but devastating.",
         "biomes":         ["mountain"],
         "loot_bias":      "rare",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Cave Spider",
@@ -100,6 +117,8 @@ ENEMY_TEMPLATES = [
         "description":    "A large spider that drops from cave ceilings without warning.",
         "biomes":         ["cave"],
         "loot_bias":      "uncommon",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Skeleton Warrior",
@@ -111,6 +130,8 @@ ENEMY_TEMPLATES = [
         "description":    "Animated bones clutching an ancient weapon. No fear. No mercy.",
         "biomes":         ["cave", "castle"],
         "loot_bias":      "rare",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Wild Boar",
@@ -122,6 +143,8 @@ ENEMY_TEMPLATES = [
         "description":    "A bristled boar with tusks like daggers. It charges without hesitation.",
         "biomes":         ["forest", "mountain"],
         "loot_bias":      "uncommon",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Highwayman",
@@ -133,6 +156,8 @@ ENEMY_TEMPLATES = [
         "description":    "A masked brigand who preys on lone travellers. Cocky until cornered.",
         "biomes":         ["desert", "mountain"],
         "loot_bias":      "uncommon",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Bandit Cutthroat",
@@ -144,6 +169,8 @@ ENEMY_TEMPLATES = [
         "description":    "Fast and vicious. Light armour, heavy intent.",
         "biomes":         ["forest", "desert", "mountain"],
         "loot_bias":      "common",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
     },
     {
         "name":           "Castle Guard",
@@ -155,6 +182,50 @@ ENEMY_TEMPLATES = [
         "description":    "A guard long abandoned by their lord. Still holding their post out of habit.",
         "biomes":         ["castle"],
         "loot_bias":      "rare",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
+    },
+
+    # ── Mage-type enemies ─────────────────────────────────────────────────────
+
+    {
+        "name":           "Goblin Shaman",
+        "armor_type":     "cloth",
+        "hp_range":       (22, 38),
+        "combat_range":   (10, 20),
+        "defense_range":  (5,  15),
+        "agility_range":  (20, 40),
+        "description":    "A goblin draped in bones, muttering in a language no one taught it.",
+        "biomes":         ["forest", "cave"],
+        "loot_bias":      "uncommon",
+        "enemy_type":     "half_mage",
+        "enemy_spells":   ["Frost Bolt", "Shock"],
+    },
+    {
+        "name":           "Bandit Sorcerer",
+        "armor_type":     "cloth",
+        "hp_range":       (30, 50),
+        "combat_range":   (15, 28),
+        "defense_range":  (10, 22),
+        "agility_range":  (18, 35),
+        "description":    "A road bandit who traded steel for stolen scrolls. More dangerous for it.",
+        "biomes":         ["forest", "desert", "mountain"],
+        "loot_bias":      "uncommon",
+        "enemy_type":     "half_mage",
+        "enemy_spells":   ["Fireball", "Shock", "Frost Bolt"],
+    },
+    {
+        "name":           "Skeleton Mage",
+        "armor_type":     "cloth",
+        "hp_range":       (35, 55),
+        "combat_range":   (12, 25),
+        "defense_range":  (10, 20),
+        "agility_range":  (8,  20),
+        "description":    "A skeleton that remembers it once knew things. The knowledge did not leave with the flesh.",
+        "biomes":         ["cave", "castle"],
+        "loot_bias":      "rare",
+        "enemy_type":     "mage",
+        "enemy_spells":   ["Frost Bolt", "Shadow Step", "Drain Life"],
     },
 ]
 
@@ -162,16 +233,18 @@ ENEMY_TEMPLATES = [
 def spawn_enemy(template: dict) -> Enemy:
     hp = random.randint(*template["hp_range"])
     return Enemy(
-        name=template["name"],
-        armor_type=template["armor_type"],
-        hp=hp,
-        max_hp=hp,
-        combat_skill=random.randint(*template["combat_range"]),
-        defense_skill=random.randint(*template["defense_range"]),
-        agility=random.randint(*template["agility_range"]),
-        description=template["description"],
-        biomes=list(template["biomes"]),
-        loot_bias=template["loot_bias"],
+        name          = template["name"],
+        armor_type    = template["armor_type"],
+        hp            = hp,
+        max_hp        = hp,
+        combat_skill  = random.randint(*template["combat_range"]),
+        defense_skill = random.randint(*template["defense_range"]),
+        agility       = random.randint(*template["agility_range"]),
+        description   = template["description"],
+        biomes        = list(template["biomes"]),
+        loot_bias     = template["loot_bias"],
+        enemy_type    = template.get("enemy_type", "combat"),
+        enemy_spells  = list(template.get("enemy_spells", [])),
     )
 
 

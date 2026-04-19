@@ -153,39 +153,82 @@ def apply_move_special(move_name: str, state: Dict, player: Player, enemy: Enemy
     return ""
 
 
+# ── Enemy spell cast ─────────────────────────────────────────────────────────
+
+def cast_enemy_spell(spell_name: str, enemy: Enemy, player: Player) -> Tuple[int, str]:
+    """
+    Enemy casts a spell. Returns (damage, label).
+    Enemies cast freely — no mana cost.
+    """
+    spell = SPELLS.get(spell_name)
+    if not spell:
+        return 0, "fizzled"
+
+    if spell.get("damage_type") == "heal":
+        return random.randint(5, 12), "shadow surge"
+
+    armor      = player.equipped.get("armor")
+    armor_type = armor.armor_type if armor else "none"
+    eff        = spell["effectiveness"].get(armor_type, 1.0)
+    skill_mod  = max(0.5, min(1.4, 1.0 + (enemy.combat_skill - player.defense) / 200.0))
+    raw        = spell["power"] * eff * skill_mod * random.uniform(0.80, 1.20)
+    return max(1, round(raw)), effectiveness_label(eff)
+
+
 # ── Enemy attack ─────────────────────────────────────────────────────────────
 
-def enemy_attack(enemy: Enemy, player: Player, state: Dict) -> Tuple[int, str]:
+def enemy_attack(enemy: Enemy, player: Player, state: Dict) -> Tuple[int, str, bool]:
     """
-    Enemy picks a random move (from generic MOVES pool) and attacks.
-    Applies player defensive / evading status.
-    Returns (damage, move_name).
+    Enemy attacks or casts depending on enemy_type.
+    Returns (damage, description, is_spell).
+    half_mage: 35% cast chance. mage: 65% cast chance.
     """
+    # ── Decide whether to cast ────────────────────────────────────────────
+    is_spell = False
+    if enemy.enemy_spells:
+        threshold = {"mage": 0.65, "half_mage": 0.35}.get(enemy.enemy_type, 0.0)
+        if random.random() < threshold:
+            is_spell = True
+
+    if is_spell:
+        spell_name = random.choice(enemy.enemy_spells)
+        dmg, label = cast_enemy_spell(spell_name, enemy, player)
+
+        if state.get("player_evading"):
+            state["player_evading"] = False
+            if random.random() < 0.50:
+                return 0, f"{spell_name} (evaded)", True
+
+        if state.get("player_defensive"):
+            state["player_defensive"] = False
+            dmg = max(1, round(dmg * 0.80))   # spells pierce armour better
+
+        return dmg, f"casts {spell_name}!", True
+
+    # ── Physical attack ───────────────────────────────────────────────────
     move_name = random.choice(list(MOVES.keys()))
     e_combat  = enemy.combat_skill
     if state.get("enemy_staggered", 0) > 0:
-        e_combat  = max(5, e_combat - 10)
+        e_combat = max(5, e_combat - 10)
         state["enemy_staggered"] -= 1
 
-    # Player evading — 50% miss
     if state.get("player_evading"):
         state["player_evading"] = False
         if random.random() < 0.50:
-            return 0, move_name + " (dodged)"
+            return 0, move_name + " (dodged)", False
 
     damage, _, _, _ = calculate_damage(
-        attacker_combat=e_combat,
-        defender_defense=player.defense,
-        move_name=move_name,
-        armor_type="none",
+        attacker_combat  = e_combat,
+        defender_defense = player.defense,
+        move_name        = move_name,
+        armor_type       = "none",
     )
 
-    # Player defensive — absorb 40%
     if state.get("player_defensive"):
         state["player_defensive"] = False
         damage = max(1, round(damage * 0.60))
 
-    return damage, move_name
+    return damage, move_name, False
 
 
 # ── Spell cast ────────────────────────────────────────────────────────────────
