@@ -1,0 +1,179 @@
+"""
+Full item database.
+
+item_type values:
+  weapon / armor / ring / necklace / potion / book / material / consumable / gem
+
+New optional fields (all default to None/0/False for backward compat):
+  weapon_type  — "sword" | "dagger" | "axe" | "mace" | "bow" | "staff"
+  armor_value  — defense points granted when equipped
+  stat_bonuses — {skill_name: int} applied while equipped (ring/necklace)
+  effect       — potion effect string: "heal_30" | "mana_25" | "str_boost" | "agi_boost"
+  lore         — two-sentence lore text (books)
+  cursed       — if True, applying debuff on equip
+  curse_effect — "drain_hp" | "reduce_max_hp"
+"""
+
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict
+
+RARITY_WEIGHTS = {
+    "common":   60,
+    "uncommon": 25,
+    "rare":     12,
+    "epic":      3,
+}
+
+RARITY_LABELS = {
+    "common":   "Common",
+    "uncommon": "Uncommon",
+    "rare":     "Rare",
+    "epic":     "EPIC",
+}
+
+
+@dataclass
+class Item:
+    name: str
+    base_value: int
+    rarity: str
+    item_type: str
+    description: str
+    biome_tags: List[str]                    = field(default_factory=list)
+    weapon_type: Optional[str]               = None
+    armor_value: int                         = 0
+    stat_bonuses: Optional[Dict[str, int]]   = None
+    effect: Optional[str]                    = None
+    lore: Optional[str]                      = None
+    cursed: bool                             = False
+    curse_effect: Optional[str]              = None
+
+
+# ── TRADE GOODS (raw materials, gems) ────────────────────────────────────────
+TRADE_ITEMS = [
+    Item("Rough Cloth",      10, "common",   "material",   "Coarse fabric, useful for repairs.",                  ["dusthaven"]),
+    Item("Dried Fruit",       8, "common",   "consumable", "Desert staple. Sweet and long-lasting.",              ["dusthaven"]),
+    Item("Herb Bundle",      12, "common",   "consumable", "Forest herbs with mild healing properties.",          ["ashenvale"]),
+    Item("Wolf Tooth",       15, "common",   "material",   "Curio value. Some alchemists want these.",            ["ashenvale"]),
+    Item("Copper Ore",       18, "common",   "material",   "Raw copper from shallow deposits.",                   ["ironpeak"]),
+    Item("Leather Strap",    14, "common",   "material",   "Tanned leather for bindings and repairs.",            ["ashenvale"]),
+    Item("Goblin Ear",        6, "common",   "material",   "Proof of a kill. Bounty offices pay a small sum.",   []),
+    Item("Iron Ore",         22, "common",   "material",   "Unrefined iron from mountain rock.",                  ["ironpeak"]),
+    Item("Wolf Pelt",        70, "uncommon", "material",   "A thick, warm pelt. Good for desert trade.",         ["ashenvale"]),
+    Item("Silk Cloth",       90, "uncommon", "material",   "Fine silk from desert caravan traders.",              ["dusthaven"]),
+    Item("Amber Vial",       75, "uncommon", "consumable", "Mysterious amber liquid. Alchemical value.",          []),
+    Item("Spice Pouch",      65, "uncommon", "material",   "Exotic spices from the desert markets.",              ["dusthaven"]),
+    Item("Dragon Hide",     280, "rare",     "material",   "A shard of drake scale. Completely fireproof.",       []),
+    Item("Moonstone",       320, "rare",     "gem",        "Glows faintly by night. Highly sought.",              []),
+    Item("Enchanted Cloth", 290, "rare",     "material",   "Woven with minor protective magic.",                  []),
+    Item("Daedric Shard",   900, "epic",     "material",   "A fragment from another plane. Immense power.",       []),
+    Item("Phoenix Feather", 850, "epic",     "material",   "Still warm to the touch. Alchemists will pay anything.", []),
+    Item("Star Ruby",       950, "epic",     "gem",        "Deep red, perfectly cut. Absolutely flawless.",       []),
+    Item("Ancient Relic",  1100, "epic",     "material",   "Purpose unknown. Its age is unmistakable.",           []),
+    Item("Silver Ring",      95, "uncommon", "gem",        "A simple silver band. Clean craftsmanship.",          []),
+    Item("Gold Amulet",     350, "rare",     "gem",        "Engraved with forgotten sigils.",                     []),
+]
+
+# ── WEAPONS (equippable) ─────────────────────────────────────────────────────
+WEAPON_ITEMS = [
+    Item("Wooden Club",      20, "common",   "weapon", "Heavy wood. Crude but effective.",             ["ashenvale"], weapon_type="mace"),
+    Item("Iron Sword",       40, "common",   "weapon", "A basic iron sword. Reliable.",                ["ironpeak"],  weapon_type="sword"),
+    Item("Iron Axe",         45, "common",   "weapon", "A heavy chopping axe. Serviceable.",           ["ironpeak"],  weapon_type="axe"),
+    Item("Short Bow",        55, "common",   "weapon", "Light and accurate at short range.",            ["ashenvale"], weapon_type="bow"),
+    Item("Steel Dagger",     85, "uncommon", "weapon", "Well-balanced. Holds a sharp edge.",           ["ironpeak"],  weapon_type="dagger"),
+    Item("Steel Mace",       90, "uncommon", "weapon", "A solid flanged mace. Mail's worst enemy.",    ["ironpeak"],  weapon_type="mace"),
+    Item("Hunting Bow",     110, "uncommon", "weapon", "A longer bow with better range and pull.",     ["ashenvale"], weapon_type="bow"),
+    Item("Mage Staff",      110, "uncommon", "weapon", "Carved ashwood with a crystal tip.",           ["ashenvale"], weapon_type="staff"),
+    Item("Elven Blade",     300, "rare",     "weapon", "Ancient craftsmanship. Light as a whisper.",   [],            weapon_type="sword"),
+    Item("Void Bow",        400, "rare",     "weapon", "Arrows from this bow arrive before you hear the shot.", [], weapon_type="bow"),
+    Item("Cursed Blade",     50, "uncommon", "weapon", "A blade that hums with wrong energy.",         [],
+         weapon_type="sword", cursed=True, curse_effect="drain_hp"),
+]
+
+# ── ARMOUR (equippable) ──────────────────────────────────────────────────────
+ARMOR_ITEMS = [
+    Item("Padded Jacket",    35, "common",   "armor", "Light cloth padding. Better than nothing.",       [], armor_value=3),
+    Item("Leather Vest",     65, "common",   "armor", "Tanned hide stitched into a serviceable vest.",   [], armor_value=6),
+    Item("Chain Hauberk",   120, "uncommon", "armor", "Interlocked iron rings. Heavy but effective.",    [], armor_value=10),
+    Item("Scale Armour",    180, "uncommon", "armor", "Overlapping steel scales. Solid protection.",     [], armor_value=13),
+    Item("Plate Cuirass",   350, "rare",     "armor", "Full-torso plate. Serious investment.",           [], armor_value=18),
+]
+
+# ── ACCESSORIES — rings and necklaces ────────────────────────────────────────
+ACCESSORY_ITEMS = [
+    Item("Copper Ring",      18, "common",   "ring",     "A plain copper band.",                     [], stat_bonuses={"Martial": 2}),
+    Item("Thief's Signet",   80, "uncommon", "ring",     "Worn smooth by quick fingers.",            [], stat_bonuses={"Stealth": 5}),
+    Item("Merchant's Band",  85, "uncommon", "ring",     "A ring favoured by successful traders.",   [], stat_bonuses={"Merchantilism": 5}),
+    Item("Ranger's Cord",    70, "uncommon", "necklace", "Braided leather worn by forest scouts.",   [], stat_bonuses={"Survival": 5}),
+    Item("Scholar's Chain", 120, "rare",     "necklace", "Thin gold links with a carved lens.",      [], stat_bonuses={"Dungeoneering": 6, "Magic": 3}),
+    Item("Warband Totem",   140, "rare",     "necklace", "A soldier's charm. Inspires precision.",   [], stat_bonuses={"Martial": 6, "Survival": 3}),
+    Item("Skull Ring",       30, "uncommon", "ring",     "Cold to the touch. Something is wrong.",   [],
+         stat_bonuses={"Martial": 8}, cursed=True, curse_effect="reduce_max_hp"),
+]
+
+# ── POTIONS (consumable in and out of combat) ─────────────────────────────────
+POTION_ITEMS = [
+    Item("Health Potion",    30, "common",   "potion", "A red vial. Restores 30 HP.",                    [], effect="heal_30"),
+    Item("Mana Draught",     35, "common",   "potion", "A blue vial. Restores 25 mana.",                 [], effect="mana_25"),
+    Item("Strength Draft",   45, "uncommon", "potion", "Raises combat power for one fight.",             [], effect="str_boost"),
+    Item("Swiftness Tonic",  40, "uncommon", "potion", "Raises agility for one fight.",                  [], effect="agi_boost"),
+    Item("Full Restore",     90, "rare",     "potion", "Restores HP and mana fully. Tastes awful.",      [], effect="full_restore"),
+]
+
+# ── LORE BOOKS (readable, sell for small amounts) ─────────────────────────────
+BOOK_ITEMS = [
+    Item("The Merchant's Code",      15, "common",   "book",
+         "A slim volume of trading laws.",
+         [],
+         lore="Trade in Al-Rimal is governed by unwritten rules older than any treaty. Break them once and the caravan masters will remember."),
+    Item("Waldheim: A History",      12, "common",   "book",
+         "Damp pages, faded ink.",
+         [],
+         lore="Waldheim was not always a settlement. Before the hunters came, it was a burial ground for a people whose name has not survived."),
+    Item("Geology of Las Cumbres",   18, "common",   "book",
+         "Densely technical, with margin notes.",
+         [],
+         lore="The ore veins beneath Las Cumbres run deeper than any mine has reached. The locals believe something lives in the unmined dark."),
+    Item("On the Nature of Goblins", 10, "common",   "book",
+         "Illustrated with unsettling accuracy.",
+         [],
+         lore="Goblins do not form armies by choice. Something is always driving them. When you kill one, ask yourself what it was running from."),
+    Item("The Sellsword's Almanac",  20, "uncommon", "book",
+         "A battered field manual.",
+         [],
+         lore="Every city worth defending has already been betrayed by someone who knew its walls. Trust the walls. Not the men who built them."),
+    Item("Arcane Primer Vol. I",     25, "uncommon", "book",
+         "Glows faintly at page 7.",
+         [],
+         lore="Magic does not come from the caster. It passes through them. The damage it does to the untrained is the cost of being a poor conductor."),
+    Item("The Cursed Inventory",     30, "rare",     "book",
+         "The cover repels the eye.",
+         [],
+         lore="Of the 40 cursed relics catalogued before the author disappeared, 38 were found with people who insisted they were harmless. Two are still missing."),
+]
+
+# ── COMBINED POOL ─────────────────────────────────────────────────────────────
+ITEMS = (
+    TRADE_ITEMS
+    + WEAPON_ITEMS
+    + ARMOR_ITEMS
+    + ACCESSORY_ITEMS
+    + POTION_ITEMS
+    + BOOK_ITEMS
+)
+
+ITEM_LOOKUP = {item.name: item for item in ITEMS}
+
+
+def get_items_by_rarity(rarity: str):
+    return [i for i in ITEMS if i.rarity == rarity]
+
+def get_items_by_type(item_type: str):
+    return [i for i in ITEMS if i.item_type == item_type]
+
+# Items that can drop as loot (exclude potions and books from random drops —
+# those are bought or found in specific contexts)
+LOOT_POOL = [
+    i for i in ITEMS
+    if i.item_type not in ("potion",) and not i.cursed
+]
