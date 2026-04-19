@@ -1409,10 +1409,10 @@ def main():
     title_screen("THE MERCHANT'S ROAD")
     print(f"  {C.DIM}Three cities. Open roads. One market worth mastering.{C.RESET}")
     print()
-    print(f"  {C.BBLACK}Alpha — World v1.3  |  Merchant system: Phase 2{C.RESET}")
+    print(f"  {C.BBLACK}Alpha - World v1.3  |  Merchant system: Phase 2{C.RESET}")
     print()
     pause("Press Enter to begin...")
-    start_ambient_loop()   # begin dark fantasy ambient from the opening screen
+    start_ambient_loop()
 
     player = character_creation()
 
@@ -1421,11 +1421,6 @@ def main():
             city_loop(player)
         elif player.on_road:
             road_loop(player)
-
-
-if __name__ == "__main__":
-    main()
-er)
 
 
 if __name__ == "__main__":
