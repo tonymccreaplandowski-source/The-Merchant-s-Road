@@ -75,8 +75,7 @@ def hr(char: str = "═", width: int = 62):
 # Melodic sequences: list of (frequency_hz, duration_ms) pairs.
 # 0 Hz = silent pause.
 _MELODIES = {
-    # Dark fantasy ambient loop — A minor, slow and haunting.
-    # Played continuously in background; stops for combat, resumes after.
+    # ── Road ambient — A minor, slow and haunting ─────────────────────────────
     "ambient": [
         (110, 300), (0, 250),   # A2 — low root drone
         (165, 250), (0, 200),   # E3 — fifth, hollow
@@ -89,6 +88,47 @@ _MELODIES = {
         (147, 200), (0, 200),   # D3 — descend
         (131, 250), (0, 300),   # C3
         (110, 400), (0, 2500),  # A2 — return to root, long silence
+    ],
+    # ── City ambient — C major, warm and wandering ────────────────────────────
+    "ambient_city": [
+        (523, 200), (0, 150),   # C4 — bright root
+        (659, 200), (0, 150),   # E4 — major third
+        (784, 180), (0, 200),   # G4 — fifth
+        (659, 150), (0, 150),   # E4 — step back
+        (587, 200), (0, 200),   # D4
+        (523, 250), (0, 300),   # C4 — settle
+        (440, 150), (0, 150),   # A3 — descend
+        (494, 200), (0, 150),   # B3
+        (523, 200), (0, 200),   # C4
+        (392, 200), (0, 200),   # G3 — drop
+        (440, 200), (0, 200),   # A3
+        (523, 300), (0, 2000),  # C4 — resolve, pause
+    ],
+    # ── Dungeon ambient — E minor, oppressive and sparse ─────────────────────
+    "ambient_dungeon": [
+        (82,  500), (0, 500),   # E2 — deep drone
+        (98,  300), (0, 400),   # G2 — minor third up
+        (87,  250), (0, 500),   # F2 — dissonant half-step
+        (82,  600), (0, 700),   # E2 — fall back
+        (110, 300), (0, 300),   # A2 — step up
+        (98,  200), (0, 300),   # G2
+        (87,  250), (0, 400),   # F2 — unresolved
+        (82,  700), (0, 3000),  # E2 — long, airless silence
+    ],
+    # ── Tension ambient — A minor, quick and unsettling ──────────────────────
+    "ambient_tension": [
+        (220, 100), (0, 80),    # A3 — quick pulse
+        (196, 100), (0, 80),    # G3
+        (175, 150), (0, 100),   # F3 — minor pull
+        (165, 200), (0, 150),   # E3
+        (220, 100), (0, 60),    # A3 — repeat, faster
+        (233, 100), (0, 80),    # Bb3 — raised tension
+        (220, 150), (0, 120),   # A3
+        (175, 100), (0, 100),   # F3
+        (165, 200), (0, 150),   # E3
+        (147, 150), (0, 150),   # D3 — descend
+        (165, 300), (0, 800),   # E3 — hold
+        (0, 600),               # silence
     ],
     "city_arrive": [
         (523, 80), (659, 80), (784, 80), (1047, 180),
@@ -146,23 +186,41 @@ def play_melody(name: str) -> None:
 
 _ambient_stop_event = threading.Event()
 _ambient_thread: threading.Thread = None
+_current_context: str = "road"   # tracks which context is (or was last) playing
+
+# Maps context names to melody keys in _MELODIES
+_CONTEXT_MELODY = {
+    "road":    "ambient",
+    "city":    "ambient_city",
+    "dungeon": "ambient_dungeon",
+    "tension": "ambient_tension",
+}
 
 
-def start_ambient_loop() -> None:
-    """Start the dark fantasy ambient melody looping in the background.
-    Safe to call multiple times — skips if already running.
+def start_ambient_loop(context: str = "road") -> None:
+    """Start the ambient loop for the given context (road/city/dungeon/tension).
+    If the same context is already playing, does nothing.
+    If a different context is playing, stops it and starts the new one.
     Silently does nothing on non-Windows or if winsound is unavailable.
     """
-    global _ambient_thread
-    if _ambient_thread is not None and _ambient_thread.is_alive():
-        return   # already playing
+    global _ambient_thread, _current_context
 
+    # Switch context: stop the running loop so the new one can start cleanly
+    if _ambient_thread is not None and _ambient_thread.is_alive():
+        if _current_context == context:
+            return   # already playing this context — no-op
+        _ambient_stop_event.set()
+        _ambient_thread.join(timeout=0.6)
+
+    _current_context = context
     _ambient_stop_event.clear()
+
+    melody_key = _CONTEXT_MELODY.get(context, "ambient")
 
     def _loop():
         try:
             import winsound
-            tones = _MELODIES["ambient"]
+            tones = _MELODIES[melody_key]
             while not _ambient_stop_event.is_set():
                 for freq, dur in tones:
                     if _ambient_stop_event.is_set():
@@ -181,6 +239,13 @@ def start_ambient_loop() -> None:
 
     _ambient_thread = threading.Thread(target=_loop, daemon=True)
     _ambient_thread.start()
+
+
+def resume_ambient_loop() -> None:
+    """Resume the ambient loop using whatever context was last active.
+    Used after combat ends (flee or victory) to restore the pre-combat music.
+    """
+    start_ambient_loop(_current_context)
 
 
 def stop_ambient_loop() -> None:
@@ -389,12 +454,13 @@ def show_world_map(player):
     print()
 
 
+
 def show_combat_screen(player, enemy, message: str = ""):
     """Render the combat encounter screen."""
     clear()
     print()
     box(
-        [C.BRED + C.BOLD + "    ⚔   COMBAT   ⚔" + C.RESET],
+        [C.BRED + C.BOLD + "    \u2694   COMBAT   \u2694" + C.RESET],
         border_color=C.BRED,
     )
     print()
@@ -411,7 +477,6 @@ def show_combat_screen(player, enemy, message: str = ""):
     p_bar = hp_bar(player.hp, player.max_hp)
     m_bar = mana_bar(player.mana, player.max_mana)
 
-    # Equipped weapon name for quick reference
     weapon = player.equipped.get("weapon")
     weapon_label = (
         f"  {C.DIM}[{weapon.name}]{C.RESET}" if weapon else
@@ -428,21 +493,19 @@ def show_combat_screen(player, enemy, message: str = ""):
         print()
         hr("─")
         for line in message.split("\n"):
-            print(f"  {C.BYELLOW}» {line.strip()}{C.RESET}")
+            print(f"  {C.BYELLOW}\u00bb {line.strip()}{C.RESET}")
     print()
 
 
 def show_character_sheet(player):
-    """Full character sheet display with class, sprite, equipment, and mana."""
-    from engine.player  import SKILLS, SKILL_DESCRIPTIONS
+    """Full character sheet display with class, sprite, equipment, skills, and inventory."""
+    from engine.player  import SKILLS, SKILL_DESCRIPTIONS, MAX_INVENTORY
     from engine.classes import get_class, print_sprite
     clear()
 
     dominant_skill, cls = get_class(player.skills)
+    title_screen(f"{player.name.upper()} \u2014 {cls['name'].upper()}")
 
-    title_screen(f"{player.name.upper()} — {cls['name'].upper()}")
-
-    # Sprite + class info
     print(f"  {C.BYELLOW}\"{cls['tagline']}\"{C.RESET}")
     print()
     print_sprite(dominant_skill, indent=4)
@@ -459,7 +522,7 @@ def show_character_sheet(player):
     print(f"  {C.DIM}Days on the road: {player.days_elapsed}{C.RESET}")
     print()
 
-    # Equipment slots
+    # Equipment
     section("EQUIPMENT")
     slots = [("weapon", "Weapon"), ("armor", "Armour"), ("ring", "Ring"), ("necklace", "Necklace")]
     for slot_key, slot_label in slots:
@@ -473,73 +536,62 @@ def show_character_sheet(player):
             curse_tag = f"  {C.BRED}[CURSED]{C.RESET}" if item.cursed else ""
             print(f"  {C.BCYAN}{slot_label:<10}{C.RESET}  {color}{item.name}{C.RESET}{bonuses}{curse_tag}")
         else:
-            print(f"  {C.BCYAN}{slot_label:<10}{C.RESET}  {C.BBLACK}— empty —{C.RESET}")
-
-    # Skills
-    section("SKILLS")
-    for name in SKILLS:
-        val    = player.skill(name)
-        bar    = skill_bar(val)
-        marker = f" {C.BYELLOW}★{C.RESET}" if name == dominant_skill else ""
-        print(f"  {C.BCYAN}{name:<16}{C.RESET}  {bar}  {val:>3}{marker}  {C.DIM}{SKILL_DESCRIPTIONS[name]}{C.RESET}")
-
-    # Inventory
-    section("INVENTORY")
-    print(f"  {C.DIM}Carrying {len(player.inventory)}/12 items{C.RESET}")
-    print()
-    if not player.inventory:
-        print(f"  {C.BBLACK}Empty.{C.RESET}")
-    else:
-        total_val = player.inventory_value()
-        for item in player.inventory:
-            print(item_line(item))
-        print()
-        print(f"  {C.DIM}Total base value: {total_val}gp{C.RESET}")
-    print()
-    pause()
-
-
-def show_journal(player) -> None:
-    """Render the player's lore journal with flavour text based on how full it is."""
-    clear()
-    title_screen("THE JOURNAL")
-
-    count = len(player.journal)
-
-    # Flavour text based on fullness
-    if count == 0:
-        flavour = "These pages are empty and ready to be filled with your adventures."
-    elif count < 10:
-        flavour = "You've been exploring the world. You realise not all is as you once thought."
-    elif count < 20:
-        flavour = "Pages falling out, leather torn. This book is full of all that has been seen."
-    else:
-        flavour = "Some call you sage, others call you wise. You know that you've seen the edges of the world."
-
-    print(f"  {C.BYELLOW}\"{flavour}\"{C.RESET}")
-    print(f"  {C.DIM}Entries: {count}{C.RESET}")
+            print(f"  {C.BCYAN}{slot_label:<10}{C.RESET}  {C.BBLACK}\u2014 empty \u2014{C.RESET}")
     print()
     hr()
 
-    if not player.journal:
+    # Skills
+    section("SKILLS")
+    for skill in SKILLS:
+        val  = player.skill(skill)
+        bar  = skill_bar(val)
+        desc = SKILL_DESCRIPTIONS.get(skill, "")
+        print(f"  {C.BCYAN}{skill:<16}{C.RESET}  {bar}  {C.BYELLOW}{val:3}{C.RESET}  {C.DIM}{desc}{C.RESET}")
+    print()
+    hr()
+
+    # Learned spells
+    if getattr(player, "learned_spells", None):
+        section("SPELLS")
+        from data.spells import SPELL_REGISTRY
+        for spell_name in player.learned_spells:
+            spell = SPELL_REGISTRY.get(spell_name)
+            if spell:
+                if spell.mana_cost > 0:
+                    cost_str = f"  {C.DIM}({spell.mana_cost} MP){C.RESET}"
+                else:
+                    cost_str = f"  {C.BRED}({spell.self_cost} HP){C.RESET}"
+                print(f"  {C.BPURPLE}{spell.name}{C.RESET}{cost_str}  {C.DIM}{spell.description}{C.RESET}")
         print()
-        print(f"  {C.BBLACK}No lore discovered yet. Explore caves and castles.{C.RESET}")
+        hr()
+
+    # Inventory
+    section("INVENTORY")
+    if not player.inventory:
+        print(f"  {C.BBLACK}(empty){C.RESET}")
+    else:
+        for i, item in enumerate(player.inventory, 1):
+            print(f"  {C.DIM}{i:2}.{C.RESET}  {item_line(item)}")
+    print()
+    print(f"  {C.DIM}Carrying {len(player.inventory)}/{MAX_INVENTORY} items{C.RESET}")
+    print()
+
+    pause()
+
+
+def show_journal(player):
+    """Display all lore entries in the player's journal."""
+    clear()
+    title_screen("JOURNAL")
+    if not player.journal:
+        print(f"  {C.DIM}Your journal is empty. Explore caves and castles to fill it.{C.RESET}")
         print()
     else:
         for i, entry in enumerate(player.journal, 1):
-            print()
             print(f"  {C.BYELLOW}Entry {i}{C.RESET}")
-            # Word-wrap at ~58 chars
-            words    = entry.split()
-            line     = ""
-            for word in words:
-                if len(line) + len(word) + 1 > 58:
-                    print(f"  {C.DIM}{line.strip()}{C.RESET}")
-                    line = word + " "
-                else:
-                    line += word + " "
-            if line.strip():
-                print(f"  {C.DIM}{line.strip()}{C.RESET}")
+            print()
+            typewrite(entry)
+            print()
             hr("─")
-
+            print()
     pause()

@@ -30,7 +30,7 @@ from ui.display     import (
     show_world_map, show_combat_screen, show_character_sheet,
     skill_bar, hp_bar, mana_bar, beep, play_melody,
     typewrite, show_journal,
-    start_ambient_loop, stop_ambient_loop,
+    start_ambient_loop, stop_ambient_loop, resume_ambient_loop,
 )
 
 
@@ -154,10 +154,32 @@ def _generate_merchant(used_names: set) -> dict:
     }
 
 
+def _generate_merchant_typed(mtype_tuple: tuple, used_names: set) -> dict:
+    """Spawn a merchant of a specific type."""
+    mtype_label, tagline, pool_fn, leading_skill = mtype_tuple
+    available = [n for n in MERCHANT_NAMES if n not in used_names]
+    name = random.choice(available) if available else random.choice(MERCHANT_NAMES)
+    used_names.add(name)
+    pool  = pool_fn()
+    stock = random.sample(pool, min(5, len(pool))) if pool else []
+    return {
+        "name":          name,
+        "type":          mtype_label,
+        "tagline":       tagline,
+        "leading_skill": leading_skill,
+        "stock":         list(stock),
+        "sold_items":    [],
+        "discount":      1.0,
+    }
+
+
 def generate_city_merchants(city_key: str) -> list:
-    """Return 3 merchants for a city visit. Called once per visit."""
+    """Return 3 merchants. Slot 1 is always a Survival Trader (basic supplies guaranteed)."""
     used = set()
-    return [_generate_merchant(used) for _ in range(3)]
+    supply_type = next(m for m in MERCHANT_TYPES if m[0] == "Survival Trader")
+    guaranteed  = _generate_merchant_typed(supply_type, used)
+    other_two   = [_generate_merchant(used) for _ in range(2)]
+    return [guaranteed] + other_two
 
 
 def _training_cost(level: int) -> int:
@@ -350,15 +372,18 @@ def character_creation() -> Player:
 #   COMBAT
 # ════════════════════════════════════════════════════════════════
 
-def run_combat(player: Player, enemy) -> bool:
+def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
     """
     Full combat loop.
     Returns True if player wins, False if player fled or was killed.
+    force_first: skip initiative roll and guarantee player acts first (stealth ambush).
     """
     state        = fresh_state()
     stop_ambient_loop()          # silence ambient while combat plays
     play_melody("combat_start")
-    player_first = roll_initiative(player, enemy)
+    player_first = True if force_first else roll_initiative(player, enemy)
+    if force_first:
+        state["enemy_staggered"] = 2   # surprised enemy: -10 combat_skill for 2 rounds
 
     if player_first:
         message = f"{enemy.description}\n  You win the initiative — you strike first\!"
@@ -532,7 +557,7 @@ def run_combat(player: Player, enemy) -> bool:
                 show_combat_screen(player, enemy, "You slip away into the shadows.")
                 beep("menu")
                 time.sleep(1.5)
-                start_ambient_loop()   # resume ambient on escape
+                resume_ambient_loop()   # resume correct context on escape
                 return False
             # Failed flee → enemy attacks this turn
             message      = "You couldn't escape\!"
@@ -562,7 +587,7 @@ def run_combat(player: Player, enemy) -> bool:
     show_combat_screen(player, enemy, f"Victory\! The {enemy.name} falls\!")
     play_melody("victory")
     time.sleep(1.5)
-    start_ambient_loop()   # resume ambient after victory fanfare
+    resume_ambient_loop()   # resume correct context after victory fanfare
     return True
 
 
@@ -830,14 +855,17 @@ def _negotiate_skill_boost(player: Player, merchant: dict) -> int:
 _TACTICS = [
     ("Appeal to shared interests", "Merchantilism",  "You invoke market wisdom and mutual benefit."),
     ("Flatter their craftsmanship", "Speechcraft",   "You compliment the quality of their wares."),
-    ("Share a useful rumour",       "Dungeoneering",  "You offer a piece of valuable road knowledge."),
-    ("Stand your ground",           "Martial",        "You let quiet confidence do the talking."),
+    ("Share a useful rumour",       "Dungeoneering", "You offer a piece of valuable road knowledge."),
+    ("Stand your ground",           "Martial",       "You let quiet confidence do the talking."),
+    ("Read the room",               "Survival",      "You hint at what you have survived. They sense it."),
+    ("Let silence speak",           "Stealth",       "You say nothing. The quiet unnerves them more than words."),
+    ("A show of power",             "Magic",         "You let something flicker. They reconsider their position."),
 ]
 
 def negotiate_session(player: Player, merchant: dict) -> float:
     """
     3-round negotiation minigame. Returns a price multiplier for this merchant.
-    0.82 = 18% off (perfect),  0.90 = 10% off,  0.95 = 5% off,  1.0 = no change,
+    0.75 = 25% off (perfect),  0.90 = 10% off,  0.98 = 2% off,  1.0 = no change,
     1.08 = 8% premium (botched).
     Can only be run once per merchant — sets merchant["negotiated"] flag.
     """
@@ -924,16 +952,16 @@ def negotiate_session(player: Player, merchant: dict) -> float:
     print()
 
     if rounds_won == 3:
-        disc        = 0.82
-        result_msg  = f"{C.BGREEN}Flawless. 18% discount secured for this merchant.{C.RESET}"
+        disc        = 0.75
+        result_msg  = f"{C.BGREEN}Flawless. 25% discount on purchases \u2014 they'll pay 25% more for what you sell.{C.RESET}"
         play_melody("negotiate_win")
     elif rounds_won == 2:
         disc        = 0.90
         result_msg  = f"{C.BGREEN}Strong showing. 10% discount secured.{C.RESET}"
         play_melody("negotiate_win")
     elif rounds_won == 1:
-        disc        = 0.95
-        result_msg  = f"{C.BYELLOW}Partial win. 5% discount secured.{C.RESET}"
+        disc        = 0.98
+        result_msg  = f"{C.BYELLOW}Narrow edge. 2% discount \u2014 barely worth it.{C.RESET}"
     else:
         disc        = 1.08
         result_msg  = f"{C.BRED}They're insulted. Prices are 8% higher now.{C.RESET}"
@@ -955,10 +983,12 @@ def merchant_screen(player: Player, city, merchant: dict):
     """Interact with a single named merchant — Sell / Buy / Negotiate / Leave."""
     while True:
         disc     = merchant.get("discount", 1.0)
+        buy_pct  = round((1 - disc) * 100)
+        sell_pct = round((disc - 1) * 100) if disc > 1.0 else round((2.0 - disc - 1.0) * 100)
         disc_str = (
-            f"  {C.BGREEN}[{round((1 - disc)*100)}% discount active]{C.RESET}"
+            f"  {C.BGREEN}[{buy_pct}% buy discount | +{sell_pct}% sell bonus]{C.RESET}"
             if disc < 1.0 else
-            f"  {C.BRED}[+{round((disc - 1)*100)}% premium]{C.RESET}"
+            f"  {C.BRED}[+{round((disc - 1)*100)}% premium — they dislike you]{C.RESET}"
             if disc > 1.0 else ""
         )
 
@@ -1184,6 +1214,25 @@ def train_skills(player: Player):
     time.sleep(1.2)
 
 
+
+INN_FLAVOUR = {
+    "dusthaven": [
+        "The inn smells of sand and spice. A caravan merchant snores in the corner.",
+        "The innkeeper pours something bitter and warm. You don't ask what it is.",
+        "Through the thin walls, you hear the desert wind. It doesn't stop all night.",
+    ],
+    "ashenvale": [
+        "The fire crackles with forest wood. A hunter's hound sleeps by the hearth.",
+        "Rain taps quietly at the roof. Somewhere outside, an owl calls once and goes silent.",
+        "The bed is rough straw and old wool. You sleep like you haven't in weeks.",
+    ],
+    "ironpeak": [
+        "The walls are thick stone. You feel safe here, or at least buried.",
+        "Miners' voices carry from the floor below. Dice on a table, coin on the bar.",
+        "The cold seeps in despite the fire. You pull the blanket close and don't argue with it.",
+    ],
+}
+
 # ════════════════════════════════════════════════════════════════
 #   CITY — REST
 # ════════════════════════════════════════════════════════════════
@@ -1198,8 +1247,14 @@ def rest_at_inn(player: Player):
         player.gold -= cost
         player.heal(player.max_hp)
         player.restore_mana()
-        print(f"\n  {C.BGREEN}You rest at the inn. HP and Mana fully restored. (−{cost}gp){C.RESET}")
-    time.sleep(1.2)
+        city_key = player.current_city or "ashenvale"
+        flavour  = random.choice(INN_FLAVOUR.get(city_key, INN_FLAVOUR["ashenvale"]))
+        clear()
+        title_screen("REST AT THE INN")
+        print(f"  {C.DIM}{flavour}{C.RESET}")
+        print()
+        print(f"  {C.BGREEN}You wake rested. HP and Mana fully restored. (−10gp){C.RESET}")
+    time.sleep(1.5)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1266,6 +1321,31 @@ def read_book_menu(player: Player):
         pause()
 
 
+
+# ════════════════════════════════════════════════════════════════
+#   BAG
+# ════════════════════════════════════════════════════════════════
+
+def bag_screen(player: Player):
+    """Single access point for Gear and Journal — usable on road and in city."""
+    while True:
+        journal_ct = len(player.journal)
+        j_hint = f"{C.DIM}({journal_ct} entr{'y' if journal_ct == 1 else 'ies'}){C.RESET}"
+        clear()
+        section("BAG")
+        print()
+        choice = prompt_choice([
+            f"Gear     {C.DIM}(equipped items, grimtotems){C.RESET}",
+            f"Journal  {j_hint}",
+            f"{C.BBLACK}Back{C.RESET}",
+        ])
+        if choice == 1:
+            equip_screen(player)
+        elif choice == 2:
+            show_journal(player)
+        else:
+            return
+
 # ════════════════════════════════════════════════════════════════
 #   CITY LOOP
 # ════════════════════════════════════════════════════════════════
@@ -1295,11 +1375,10 @@ def city_loop(player: Player):
 
         options = [
             f"The Market        {C.DIM}(3 merchants — buy, sell, negotiate){C.RESET}",
-            f"Equipment         {C.DIM}(manage equipped items){C.RESET}",
+            f"Bag               {C.DIM}(gear + journal){C.RESET}",
             f"Training Hall     {C.DIM}(improve skills for gold){C.RESET}",
             f"Rest at the Inn   {C.DIM}(restore HP & mana — 10gp){C.RESET}",
             f"Character Sheet   {C.DIM}(stats, equipment, inventory){C.RESET}",
-            f"Journal           {journal_hint}",
             f"Read a Book       {C.DIM}(add lore to your journal){C.RESET}{book_hint}",
         ]
         for dest_key in adjacent:
@@ -1312,12 +1391,12 @@ def city_loop(player: Player):
         options.append(f"{C.BBLACK}Quit{C.RESET}")
 
         choice = prompt_choice(options, "Your choice")
-        n_base = 7   # 7 base options (market/equip/train/rest/char/journal/books)
+        n_base = 6   # 6 base options (market/bag/train/rest/char/books)
 
         if choice == 1:
             visit_market(player, city)
         elif choice == 2:
-            equip_screen(player)
+            bag_screen(player)
         elif choice == 3:
             train_skills(player)
         elif choice == 4:
@@ -1325,8 +1404,6 @@ def city_loop(player: Player):
         elif choice == 5:
             show_character_sheet(player)
         elif choice == 6:
-            show_journal(player)
-        elif choice == 7:
             read_book_menu(player)
         elif choice <= n_base + len(adjacent):
             dest_key = adjacent[choice - n_base - 1]
@@ -1346,9 +1423,25 @@ def city_loop(player: Player):
 #   SPECIAL EVENTS — CAVE & CASTLE
 # ════════════════════════════════════════════════════════════════
 
+def _location_header(player, event, room_num, total_known):
+    icon      = "🕳" if event.event_type == "cave" else "🏰"
+    loc_color = C.BBLACK if event.event_type == "cave" else C.BYELLOW
+    clear()
+    print()
+    print(f"  {loc_color}{icon}  {event.name.upper()}{C.RESET}")
+    if total_known > 0:
+        print(f"  {C.DIM}Room {room_num} of {total_known}{C.RESET}")
+    else:
+        print(f"  {C.DIM}Deeper still...{C.RESET}")
+    print()
+
+
 def explore_event(player: Player, event):
-    """Handle a cave or castle exploration event."""
-    icon = "🕳" if event.event_type == "cave" else "🏰"
+    """Handle a cave or castle exploration event, room by room."""
+    icon      = "🕳" if event.event_type == "cave" else "🏰"
+    loc_color = C.BBLACK if event.event_type == "cave" else C.BYELLOW
+
+    # Entry gate
     play_melody("location_found")
     clear()
     print()
@@ -1356,42 +1449,139 @@ def explore_event(player: Player, event):
     print()
     typewrite(event.description)
     print()
+    print(f"  {C.DIM}Enemies within: ???{C.RESET}")
+    print()
 
-    choice = prompt_choice([
-        f"Enter and explore  {C.DIM}(what lies within is unknown){C.RESET}",
-        f"Pass by            {C.DIM}(continue on the road){C.RESET}",
-    ])
+    scouted      = False
+    stealth_used = False
+    total_known  = 0
+    enemies      = get_event_enemies(event)
+    force_first  = False
 
-    if choice == 2:
-        print(f"\n  {C.DIM}You give it a wide berth and press on.{C.RESET}")
-        time.sleep(0.8)
-        return
+    while True:
+        options = []
+        if not scouted:
+            options.append(f"Scout the area     {C.DIM}(Dungeoneering -- count enemies){C.RESET}")
+        if not stealth_used:
+            options.append(f"Attempt stealth    {C.DIM}(Stealth -- surprise first enemy){C.RESET}")
+        options.append(f"Enter boldly       {C.DIM}(commit now){C.RESET}")
+        options.append(f"Pass by            {C.DIM}(continue on the road){C.RESET}")
 
-    # ── Enter ─────────────────────────────────────────────────────────────────
-    enemies   = get_event_enemies(event)
-    loc_color = C.BBLACK if event.event_type == "cave" else C.BYELLOW
+        choice_idx = prompt_choice(options)
+        chosen     = options[choice_idx - 1]
+
+        if "Scout the area" in chosen:
+            scouted = True
+            roll = random.randint(1, 20) + player.skill("Dungeoneering") // 5
+            if roll >= 10:
+                total_known = len(enemies)
+                label = "enemy" if total_known == 1 else "enemies"
+                print(f"\n  {C.BGREEN}You study the entrance carefully. {total_known} {label} inside.{C.RESET}")
+            else:
+                print(f"\n  {C.DIM}You couldn't make out much from the entrance.{C.RESET}")
+            pause("Press Enter to continue...")
+            clear()
+            print()
+            print(f"  {C.BYELLOW}{icon}  {event.name.upper()}{C.RESET}")
+            print()
+            typewrite(event.description)
+            count_str = str(total_known) if total_known > 0 else "???"
+            print(f"  {C.DIM}Enemies within: {count_str}{C.RESET}")
+            print()
+
+        elif "Attempt stealth" in chosen:
+            stealth_used = True
+            roll = random.randint(1, 20) + player.skill("Stealth") // 5
+            if roll >= 12:
+                force_first = True
+                print(f"\n  {C.BGREEN}You slip inside undetected. The first enemy has no idea you're here.{C.RESET}")
+            else:
+                print(f"\n  {C.BYELLOW}You fumble the approach. No advantage gained.{C.RESET}")
+            pause("Press Enter to continue...")
+            clear()
+            print()
+            print(f"  {C.BYELLOW}{icon}  {event.name.upper()}{C.RESET}")
+            print()
+            count_str = str(total_known) if total_known > 0 else "???"
+            print(f"  {C.DIM}Enemies within: {count_str}{C.RESET}")
+            print()
+
+        elif "Pass by" in chosen:
+            print(f"\n  {C.DIM}You give it a wide berth and press on.{C.RESET}")
+            time.sleep(0.8)
+            return
+
+        else:
+            break
+
+    # Room-by-room loop
     clear()
     print()
     typewrite(f"You enter {event.name}...", indent=f"  {loc_color}")
     print(C.RESET, end="")
     time.sleep(0.8)
+    start_ambient_loop("dungeon")  # entering location
 
-    for i, enemy in enumerate(enemies, 1):
-        print(f"\n  {C.BRED}Enemy {i}/{len(enemies)}: {enemy.name} appears\!{C.RESET}")
+    for room_num, enemy in enumerate(enemies, 1):
+        _location_header(player, event, room_num, total_known)
+
+        is_ambush = force_first and room_num == 1
+        if is_ambush:
+            print(f"  {C.BGREEN}You strike from the shadows -- the {enemy.name} is caught off guard.{C.RESET}")
+            time.sleep(0.8)
+
+        print(f"  {C.BRED}{enemy.name} bars your way.{C.RESET}")
         time.sleep(1.0)
 
-        won = run_combat(player, enemy)
+        won = run_combat(player, enemy, force_first=is_ambush)
 
         if not player.is_alive():
             game_over(player)
             return
 
         if not won:
-            print(f"\n  {C.BYELLOW}You retreat from {event.name}.{C.RESET}")
+            print(f"\n  {C.BYELLOW}You fall back and escape {event.name}.{C.RESET}")
             time.sleep(1.0)
+            start_ambient_loop("road")  # fled location
             return
 
-    # ── All cleared — loot + lore ─────────────────────────────────────────────
+        # Mid-room search (not the final room)
+        is_final = (room_num == len(enemies))
+        if not is_final:
+            _location_header(player, event, room_num, total_known)
+            print(f"  {C.BGREEN}Room {room_num} cleared.{C.RESET}")
+            print()
+            print(f"  {C.DIM}You search the area...{C.RESET}")
+            time.sleep(0.6)
+
+            if random.random() < 0.30:
+                loot  = generate_loot(bias="common")
+                color = RARITY_COLOR.get(loot.rarity, C.WHITE)
+                print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]")
+                if player.can_carry():
+                    pick = prompt_choice(["Take it", "Leave it"])
+                    if pick == 1:
+                        player.add_item(loot)
+                        print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
+                else:
+                    print(f"  {C.BRED}Inventory full -- left behind.{C.RESET}")
+            else:
+                print(f"\n  {C.DIM}Nothing of interest.{C.RESET}")
+
+            print()
+            nav = prompt_choice([
+                "Press deeper",
+                f"Retreat  {C.DIM}(leave {event.name}){C.RESET}",
+            ])
+            if nav == 1:
+                start_ambient_loop("tension")  # pressing deeper
+            if nav == 2:
+                print(f"\n  {C.BYELLOW}You make your way back out of {event.name}.{C.RESET}")
+                time.sleep(1.0)
+                start_ambient_loop("road")  # retreated from location
+                return
+
+    # All rooms cleared -- final loot + lore
     clear()
     print()
     print(f"  {C.BGREEN}{C.BOLD}You clear {event.name}\!{C.RESET}")
@@ -1404,7 +1594,7 @@ def explore_event(player: Player, event):
         print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]  "
               f"{C.DIM}{loot.base_value}gp base{C.RESET}")
         if not player.can_carry():
-            print(f"  {C.BRED}Inventory full — left behind.{C.RESET}")
+            print(f"  {C.BRED}Inventory full -- left behind.{C.RESET}")
             pause("Press Enter to continue...")
             continue
         pick = prompt_choice(["Take it", "Leave it"])
@@ -1413,18 +1603,21 @@ def explore_event(player: Player, event):
             print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
         pause("Press Enter to continue...")
 
-    # ── Lore doc drop ─────────────────────────────────────────────────────────
+    # Lore drop
     if event.lore_text and event.lore_text not in player.journal:
         player.journal.append(event.lore_text)
         play_melody("journal_entry")
         print()
         hr("─")
-        print(f"  {C.BYELLOW}✦ Journal updated{C.RESET}")
+        print(f"  {C.BYELLOW}❖ Journal updated{C.RESET}")
         print()
         typewrite(event.lore_text)
         print()
         hr("─")
-        pause("Press Enter to continue...")   # give the player time to read
+        pause("Press Enter to continue...")
+
+    start_ambient_loop("road")  # all rooms cleared, back to road
+
 
 
 # ════════════════════════════════════════════════════════════════
@@ -2032,8 +2225,7 @@ def road_loop(player):
             f"Press on       {C.DIM}(continue towards {dest_name}){C.RESET}",
             camp_label,
             f"Bushcraft      {C.DIM}(forage or hunt — governed by Survival){C.RESET}",
-            f"Gear           {C.DIM}(manage equipped items){C.RESET}",
-            f"Journal        {C.DIM}({len(player.journal)} entr{'y' if len(player.journal) == 1 else 'ies'}){C.RESET}",
+            f"Bag            {C.DIM}(gear + journal){C.RESET}",
             f"Turn back      {C.DIM}(return to origin city){C.RESET}",
         ]
         choice = prompt_choice(options)
@@ -2050,14 +2242,10 @@ def road_loop(player):
             continue
 
         if choice == 4:
-            equip_screen(player)
+            bag_screen(player)
             continue
 
         if choice == 5:
-            show_journal(player)
-            continue
-
-        if choice == 6:
             abort_travel(player)
             player.road_poison   = 0
             player.road_diseased = False
@@ -2071,7 +2259,7 @@ def road_loop(player):
         if player.road_poison > 0:
             player.take_damage(5)
             player.road_poison -= 1
-            _ps = "s" if player.road_poison \!= 1 else ""
+            _ps = "s" if player.road_poison != 1 else ""
             rem = f"{player.road_poison} step{_ps} remaining" if player.road_poison > 0 else "poison has faded"
             print(f"  {C.BRED}Poison courses through you. −5 HP. ({rem}){C.RESET}")
             time.sleep(0.6)
@@ -2092,6 +2280,7 @@ def road_loop(player):
             player.road_diseased = False
             city = CITIES[player.current_city]
             play_melody("city_arrive")
+            start_ambient_loop("city")   # switch to city music on arrival
             show_world_map(player)
             print(f"\n  {C.BGREEN}You arrive in {city.name}. Day {player.days_elapsed}.{C.RESET}")
             time.sleep(1.5)
@@ -2145,22 +2334,26 @@ def game_over(player):
 #   ENTRY POINT
 # ════════════════════════════════════════════════════════════════
 
+# ════════════════════════════════════════════════════════════════
+#   ENTRY POINT
+# ════════════════════════════════════════════════════════════════
+
 def main():
     clear()
-    title_screen("THE MERCHANT'S ROAD")
+    title_screen("THE MERCHANT\'S ROAD")
     print(f"  {C.DIM}Three cities. Open roads. One market worth mastering.{C.RESET}")
     print()
-    print(f"  {C.BBLACK}Alpha - World v1.4  |  Camping & Bushcraft update{C.RESET}")
+    print(f"  {C.BBLACK}Alpha - World v2.0  |  Quality of Life Pass{C.RESET}")
     print()
     pause("Press Enter to begin...")
-    start_ambient_loop()
 
     player = character_creation()
+    start_ambient_loop("city")   # player starts in Rabenmark
 
-    while player.is_alive():
-        if player.current_city and not player.on_road:
-            city_loop(player)
-        elif player.on_road:
+    while True:
+        city_loop(player)
+        if player.on_road:
+            start_ambient_loop("road")   # switching to road — change music
             road_loop(player)
 
 

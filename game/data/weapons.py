@@ -7,8 +7,9 @@ Moves have their own power, effectiveness matrix, and optional special effect.
 Special effects:
   defensive    — reduces next incoming hit by 40%
   evade        — 50% chance enemy misses their counter-attack
-  stealth_boost— damage multiplied by (1 + Stealth/100)
-  martial_boost— damage multiplied by (1 + Martial/100)
+  stealth_boost  — damage multiplied by (1 + Stealth/100)    [Snipe]
+  martial_boost  — damage multiplied by (1 + Martial/200)    [Long Shot]
+  survival_boost — damage x (1 + Survival/200) + sets evade  [Pot Shot]
   miss_chance  — this move has a % chance to miss entirely (high risk/reward)
   stagger      — reduces enemy combat_skill by 10 for 2 turns
   slow         — reduces enemy agility by 15 for 2 turns (used by spells too)
@@ -114,9 +115,9 @@ MOVES = {
     # ── BOW ──────────────────────────────────────────────────────────────
     "Pot Shot": {
         "power": 7,
-        "description": "A quick shot while staying mobile. Reduces counter risk.",
+        "description": "A quick shot on the move. Boosted by Survival — harder to pin down.",
         "effectiveness": {"none": 1.3, "cloth": 1.3, "leather": 1.0, "mail": 0.7},
-        "special": "evade",
+        "special": "survival_boost",
     },
     "Snipe": {
         "power": 14,

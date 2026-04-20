@@ -115,9 +115,11 @@ def calculate_damage(
         bonus_mult = 1.0 + player.skill("Stealth") / 100.0
         special_tag = "stealth boost"
     elif player and special == "martial_boost":
-        # Halved compared to stealth_boost to prevent bow/martial stacking dominance
         bonus_mult = 1.0 + player.skill("Martial") / 200.0
         special_tag = "martial boost"
+    elif player and special == "survival_boost":
+        bonus_mult = 1.0 + player.skill("Survival") / 200.0
+        special_tag = "survival boost"
 
     variance = random.uniform(0.85, 1.15)
     raw      = move["power"] * effectiveness * skill_mod * bonus_mult * variance
@@ -141,9 +143,9 @@ def apply_move_special(move_name: str, state: Dict, player: Player, enemy: Enemy
     if special == "defensive":
         state["player_defensive"] = True
         return "You brace for their counter."
-    if special == "evade":
+    if special in ("evade", "survival_boost"):
         state["player_evading"] = True
-        return "You keep them guessing."
+        return "You keep moving — hard to pin down."
     if special == "stagger":
         state["enemy_staggered"] = 2
         return f"{enemy.name} loses their footing."
@@ -228,56 +230,4 @@ def enemy_attack(enemy: Enemy, player: Player, state: Dict) -> Tuple[int, str, b
         state["player_defensive"] = False
         damage = max(1, round(damage * 0.60))
 
-    return damage, move_name, False
-
-
-# ── Spell cast ────────────────────────────────────────────────────────────────
-
-def cast_spell(
-    spell_name: str,
-    player: Player,
-    enemy: Enemy,
-    state: Dict,
-) -> Tuple[int, str, str]:
-    """
-    Cast a spell. Returns (damage_or_heal, result_description, special_tag).
-    Does NOT deduct mana — caller handles spend_mana() so UI can abort.
-    """
-    spell       = SPELLS[spell_name]
-    special     = spell.get("special")
-    special_tag = ""
-
-    if spell.get("damage_type") == "heal":
-        amount = spell.get("heal_amount", 20)
-        player.heal(amount)
-        return amount, "heal", ""
-
-    effectiveness = spell["effectiveness"].get(enemy.armor_type, 1.0)
-    label         = effectiveness_label(effectiveness)
-    skill_mod     = max(0.5, min(1.5, 1.0 + (player.skill("Magic") - enemy.defense_skill) / 200.0))
-    variance      = random.uniform(0.85, 1.15)
-
-    is_crit = roll_crit(player)
-    raw     = spell["power"] * effectiveness * skill_mod * variance
-    if is_crit:
-        raw *= 1.5
-
-    damage = max(1, round(raw))
-
-    if special == "slow" and state is not None:
-        state["enemy_slowed"] = 2
-        special_tag = "target slowed"
-    if special == "evade" and state is not None:
-        state["player_evading"] = True
-        special_tag = "you phase out"
-
-    return damage, label, special_tag
-
-
-# ── Flee ─────────────────────────────────────────────────────────────────────
-
-def attempt_flee(player: Player, enemy: Enemy) -> bool:
-    stealth_bonus   = player.skill("Stealth") / 200.0
-    agility_penalty = enemy.agility           / 200.0
-    chance = max(0.10, min(0.85, FLEE_BASE_CHANCE + stealth_bonus - agility_penalty))
-    return random.random() < chance
+    retu
