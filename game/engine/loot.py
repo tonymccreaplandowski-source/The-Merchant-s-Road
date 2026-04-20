@@ -40,6 +40,7 @@ def generate_loot(bias: str = "common") -> Item:
     weights = []
     for item in ALL_ITEMS:
         base_w   = RARITY_WEIGHTS[item.rarity]
+
         adjusted = base_w * modifiers[item.rarity]
         pool.append(item)
         weights.append(adjusted)

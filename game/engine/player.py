@@ -262,3 +262,4 @@ def create_player(name: str, skill_allocations: Dict[str, int]) -> Player:
     p = Player(name=name, skills=dict(skill_allocations))
     p.mana           = min(20, p.max_mana)   # starting mana capped at 20
     p.learned_spells = _assign_starting_spells(p.skill("Magic"))
+    return p
