@@ -231,14 +231,14 @@ def use_potion(player: Player, potion, state: dict) -> str:
         return f"You drink the {potion.name}. +{gained} Mana."
     if effect == "str_boost":
         state["player_str_boost"] = True
-        return f"You drink the {potion.name}. Combat power surges\!"
+        return f"You drink the {potion.name}. Combat power surges!"
     if effect == "agi_boost":
         state["player_agi_boost"] = True
         return f"You drink the {potion.name}. You feel fleet-footed."
     if effect == "full_restore":
         player.heal(player.max_hp)
         player.restore_mana()
-        return f"You drink the {potion.name}. HP and Mana fully restored\!"
+        return f"You drink the {potion.name}. HP and Mana fully restored!"
     if effect == "map_bonus":
         player.map_bonus = True
         return f"You study the {potion.name}. Nearby locations will be easier to find."
@@ -352,7 +352,7 @@ def character_creation() -> Player:
         player.remove_item(starting_weapon)
 
     print()
-    print(f"  {C.BGREEN}✓ Character created\!{C.RESET}  "
+    print(f"  {C.BGREEN}✓ Character created!{C.RESET}  "
           f"Total points spent: {sum(allocations.values())}")
     print(f"  {C.DIM}You begin in Rabenmark with {player.gold}gp.{C.RESET}")
     print()
@@ -386,7 +386,7 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
         state["enemy_staggered"] = 2   # surprised enemy: -10 combat_skill for 2 rounds
 
     if player_first:
-        message = f"{enemy.description}\n  You win the initiative — you strike first\!"
+        message = f"{enemy.description}\n  You win the initiative — you strike first!"
     else:
         # Enemy attacks before the player's first turn
         e_dmg, e_move, e_is_spell = enemy_attack(enemy, player, state)
@@ -397,7 +397,7 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
         else:
             message = (
                 f"{enemy.description}\n"
-                f"  {enemy.name} moves first\! {e_verb} {e_move} — "
+                f"  {enemy.name} moves first! {e_verb} {e_move} — "
                 f"{C.BRED}{e_dmg}{C.RESET} damage."
             )
         beep("hit")
@@ -451,11 +451,11 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
             enemy.take_damage(dmg)
 
             if dmg == 0:
-                message = f"You use {C.BOLD}{move_name}{C.RESET}\! Missed entirely\!"
+                message = f"You use {C.BOLD}{move_name}{C.RESET}! Missed entirely!"
             else:
-                crit_str = f"  {C.BYELLOW}✦ CRITICAL\!{C.RESET}" if is_crit else ""
+                crit_str = f"  {C.BYELLOW}✦ CRITICAL!{C.RESET}" if is_crit else ""
                 message = (
-                    f"You use {C.BOLD}{move_name}{C.RESET}\! It's {label}\! "
+                    f"You use {C.BOLD}{move_name}{C.RESET}! It's {label}! "
                     f"({C.BGREEN}{dmg}{C.RESET} dmg){crit_str}"
                 )
             if special_tag:
@@ -501,7 +501,7 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
 
             if not player.spend_mana(cost):
                 message = (
-                    f"Not enough mana\! {sname} costs {cost}, "
+                    f"Not enough mana! {sname} costs {cost}, "
                     f"you have {player.mana}."
                 )
                 continue
@@ -509,12 +509,12 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
             dmg, label, stag = cast_spell(sname, player, enemy, state)
 
             if spell.get("damage_type") == "heal":
-                message = f"You cast {C.BPURPLE}{sname}{C.RESET}\! You recover {C.BGREEN}{dmg}{C.RESET} HP."
+                message = f"You cast {C.BPURPLE}{sname}{C.RESET}! You recover {C.BGREEN}{dmg}{C.RESET} HP."
                 beep("heal")
             else:
                 enemy.take_damage(dmg)
                 message = (
-                    f"You cast {C.BPURPLE}{sname}{C.RESET}\! It's {label}\! "
+                    f"You cast {C.BPURPLE}{sname}{C.RESET}! It's {label}! "
                     f"({C.BBLUE}{dmg}{C.RESET} magic damage)"
                 )
                 if stag:
@@ -560,7 +560,7 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
                 resume_ambient_loop()   # resume correct context on escape
                 return False
             # Failed flee → enemy attacks this turn
-            message      = "You couldn't escape\!"
+            message      = "You couldn't escape!"
             action_taken = True
 
         # ── Enemy counter-attack ──────────────────────────────────────────────
@@ -569,7 +569,7 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
             player.take_damage(e_dmg)
             e_verb = "casts" if e_is_spell else "retaliates with"
             if e_dmg == 0:
-                message += f"\n  {enemy.name} {e_verb} {e_move}\! (missed)"
+                message += f"\n  {enemy.name} {e_verb} {e_move}! (missed)"
             else:
                 message += (
                     f"\n  {enemy.name} {e_verb} {e_move} "
@@ -584,7 +584,7 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
         time.sleep(2)
         return False
 
-    show_combat_screen(player, enemy, f"Victory\! The {enemy.name} falls\!")
+    show_combat_screen(player, enemy, f"Victory! The {enemy.name} falls!")
     play_melody("victory")
     time.sleep(1.5)
     resume_ambient_loop()   # resume correct context after victory fanfare
@@ -610,7 +610,7 @@ def loot_screen(player: Player, enemy):
     print()
 
     if not player.can_carry():
-        print(f"  {C.BRED}Inventory full ({MAX_INVENTORY}/{MAX_INVENTORY})\! Can't carry more.{C.RESET}")
+        print(f"  {C.BRED}Inventory full ({MAX_INVENTORY}/{MAX_INVENTORY})! Can't carry more.{C.RESET}")
         pause()
         return
 
@@ -784,7 +784,7 @@ def equip_screen(player: Player):
             item = equippable[choice - 1]
             if item.cursed:
                 clear()
-                print(f"\n  {C.BRED}{C.BOLD}⚠ This item is cursed\!{C.RESET}")
+                print(f"\n  {C.BRED}{C.BOLD}⚠ This item is cursed!{C.RESET}")
                 print(f"  {C.DIM}{item.name} carries a dark enchantment. Equipping it may harm you.{C.RESET}")
                 confirm = prompt_choice([
                     f"Equip anyway  {C.BRED}(accept the risk){C.RESET}",
@@ -1210,7 +1210,7 @@ def train_skills(player: Player):
     else:
         player.gold -= cost
         player.train(skill_name)
-        print(f"\n  {C.BGREEN}✓ {skill_name} improved to {current + 1}\!{C.RESET}")
+        print(f"\n  {C.BGREEN}✓ {skill_name} improved to {current + 1}!{C.RESET}")
     time.sleep(1.2)
 
 
@@ -1584,7 +1584,7 @@ def explore_event(player: Player, event):
     # All rooms cleared -- final loot + lore
     clear()
     print()
-    print(f"  {C.BGREEN}{C.BOLD}You clear {event.name}\!{C.RESET}")
+    print(f"  {C.BGREEN}{C.BOLD}You clear {event.name}!{C.RESET}")
     print(f"  {C.DIM}You search the area carefully...{C.RESET}")
     time.sleep(1.2)
 
@@ -1967,7 +1967,7 @@ def hunting_minigame(player):
         time.sleep(0.8)
 
         if death_risk > 0 and random.random() < death_risk:
-            print(f"  {C.BRED}{C.BOLD}The {a_name} turns on you\!{C.RESET}")
+            print(f"  {C.BRED}{C.BOLD}The {a_name} turns on you!{C.RESET}")
             time.sleep(0.6)
             if a_name == "Dragon":
                 print(f"  {C.BRED}A torrent of flame engulfs you completely.{C.RESET}")
@@ -2289,7 +2289,7 @@ def road_loop(player):
         if enemy:
             clear()
             print()
-            print(f"  {C.BRED}{C.BOLD}A {enemy.name} blocks your path\\!{C.RESET}")
+            print(f"  {C.BRED}{C.BOLD}A {enemy.name} blocks your path!{C.RESET}")
             print(f"  {C.DIM}{enemy.description}{C.RESET}")
             time.sleep(1.2)
             won = run_combat(player, enemy)

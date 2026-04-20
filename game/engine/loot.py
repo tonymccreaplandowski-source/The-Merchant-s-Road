@@ -10,7 +10,15 @@ Bias modifiers push probability mass toward higher tiers:
 """
 
 import random
-from data.items import ITEMS, RARITY_WEIGHTS, Item
+from data.items import ALL_ITEMS, Item
+
+# Base rarity weights (common = most frequent, epic = very rare)
+RARITY_WEIGHTS = {
+    "common":   60,
+    "uncommon": 25,
+    "rare":     12,
+    "epic":      3,
+}
 
 # Per-bias multipliers applied on top of base rarity weights
 LOOT_BIAS_MODIFIERS = {
@@ -30,9 +38,9 @@ def generate_loot(bias: str = "common") -> Item:
 
     pool    = []
     weights = []
-    for item in ITEMS:
-        base_w    = RARITY_WEIGHTS[item.rarity]
-        adjusted  = base_w * modifiers[item.rarity]
+    for item in ALL_ITEMS:
+        base_w   = RARITY_WEIGHTS[item.rarity]
+        adjusted = base_w * modifiers[item.rarity]
         pool.append(item)
         weights.append(adjusted)
 
