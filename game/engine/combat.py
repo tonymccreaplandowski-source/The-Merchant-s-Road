@@ -155,6 +155,57 @@ def apply_move_special(move_name: str, state: Dict, player: Player, enemy: Enemy
     return ""
 
 
+# ── Player spell cast ────────────────────────────────────────────────────────
+
+def cast_spell(spell_name: str, player: Player, enemy: Enemy, state: Dict) -> Tuple[int, str, str]:
+    """
+    Player casts a spell. Returns (damage_or_heal, effectiveness_label, status_tag).
+    Mana cost is handled by the caller before this is invoked.
+    self_cost HP is deducted here.
+    """
+    from data.spells import SPELLS
+    spell = SPELLS.get(spell_name)
+    if not spell:
+        return 0, "fizzled", ""
+
+    # Self-cost (e.g. Shock, Drain Life, Lightning Arc)
+    if spell.get("self_cost", 0) > 0:
+        player.take_damage(spell["self_cost"])
+
+    special = spell.get("special")
+
+    # ── Heal spells ──────────────────────────────────────────────────────────
+    if special == "heal":
+        amount = spell.get("heal_amount", 15)
+        player.hp = min(player.max_hp, player.hp + amount)
+        return amount, "restored", ""
+
+    # ── Damage spells ────────────────────────────────────────────────────────
+    armor      = enemy.equipped.get("armor") if hasattr(enemy, "equipped") else None
+    armor_type = getattr(armor, "armor_type", None) or enemy.armor_type
+    eff        = spell["effectiveness"].get(armor_type, 1.0)
+    skill_mod  = max(0.5, min(1.5, 1.0 + player.skill("Magic") / 200.0))
+    raw        = spell["power"] * eff * skill_mod * random.uniform(0.85, 1.15)
+    dmg        = max(1, round(raw))
+
+    stag = ""
+
+    if special == "slow":
+        state["enemy_slowed"] = True
+        stag = "Target slowed — enemy loses next attack"
+
+    elif special == "evade":
+        state["player_evading"] = True
+        stag = "Shadow Step — you evade the next incoming hit"
+
+    elif special == "drain":
+        heal = spell.get("heal_amount", 10)
+        player.hp = min(player.max_hp, player.hp + heal)
+        stag = f"Drain — you recover {heal} HP"
+
+    return dmg, effectiveness_label(eff), stag
+
+
 # ── Enemy spell cast ─────────────────────────────────────────────────────────
 
 def cast_enemy_spell(spell_name: str, enemy: Enemy, player: Player) -> Tuple[int, str]:
