@@ -236,7 +236,6 @@ def enemy_attack(enemy: Enemy, player: Player, state: Dict) -> Tuple[int, str, b
     Returns (damage, description, is_spell).
     half_mage: 35% cast chance. mage: 65% cast chance.
     """
-    # ── Decide whether to cast ────────────────────────────────────────────
     is_spell = False
     if enemy.enemy_spells:
         threshold = {"mage": 0.65, "half_mage": 0.35}.get(enemy.enemy_type, 0.0)
@@ -254,31 +253,56 @@ def enemy_attack(enemy: Enemy, player: Player, state: Dict) -> Tuple[int, str, b
 
         if state.get("player_defensive"):
             state["player_defensive"] = False
-            dmg = max(1, round(dmg * 0.80))   # spells pierce armour better
+            dmg = max(1, round(dmg * 0.80))
 
-        return dmg, f"casts {spell_name}!", True
+        return dmg, f"casts {spell_name}\!", True
 
     # ── Physical attack ───────────────────────────────────────────────────
-    move_name = random.choice(list(MOVES.keys()))
-    e_combat  = enemy.combat_skill
+    move_name = random.choice(enemy.moves) if enemy.moves else "Strike"
+    move      = MOVES.get(move_name, {})
+
     if state.get("enemy_staggered", 0) > 0:
-        e_combat = max(5, e_combat - 10)
         state["enemy_staggered"] -= 1
+        enemy.combat_skill = max(0, enemy.combat_skill - 10)
+
+    atk = enemy.combat_skill + random.randint(1, 20)
+    dfn = player.defense   + random.randint(1, 20)
+
+    if atk <= dfn:
+        return 0, move_name, False
 
     if state.get("player_evading"):
         state["player_evading"] = False
         if random.random() < 0.50:
-            return 0, move_name + " (dodged)", False
-
-    damage, _, _, _ = calculate_damage(
-        attacker_combat  = e_combat,
-        defender_defense = player.defense,
-        move_name        = move_name,
-        armor_type       = "none",
-    )
+            return 0, f"{move_name} (evaded)", False
 
     if state.get("player_defensive"):
         state["player_defensive"] = False
-        damage = max(1, round(damage * 0.60))
+        armor      = player.equipped.get("armor")
+        armor_type = armor.armor_type if armor else "none"
+        reduction  = {"none": 0.0, "cloth": 0.10, "leather": 0.20, "mail": 0.35}.get(armor_type, 0.0)
+        base       = move.get("power", enemy.base_damage) * random.uniform(0.8, 1.2)
+        dmg        = max(1, round(base * (1.0 - reduction) * 0.75))
+        return dmg, move_name, False
 
-    retu
+    armor      = player.equipped.get("armor")
+    armor_type = armor.armor_type if armor else "none"
+    reduction  = {"none": 0.0, "cloth": 0.10, "leather": 0.20, "mail": 0.35}.get(armor_type, 0.0)
+    base       = move.get("power", enemy.base_damage) * random.uniform(0.8, 1.2)
+    dmg        = max(1, round(base * (1.0 - reduction)))
+    return dmg, move_name, False
+
+
+# ── Flee attempt ─────────────────────────────────────────────────────────────
+
+def attempt_flee(player: Player, enemy: Enemy) -> bool:
+    """
+    Player attempts to flee combat.
+    Chance = FLEE_BASE_CHANCE + Stealth bonus - enemy agility penalty.
+    Returns True if successful.
+    """
+    chance = FLEE_BASE_CHANCE
+    chance += player.skill("Stealth") / 400.0
+    chance -= enemy.agility / 200.0
+    chance  = max(0.05, min(0.85, chance))
+    return random.random() < chance

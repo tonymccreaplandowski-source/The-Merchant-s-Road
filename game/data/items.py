@@ -205,43 +205,23 @@ BOOK_ITEMS = [
     Item("The Sellsword's Almanac",  20, "uncommon", "book",
          "A battered field manual.",
          [],
-         lore="Every city worth defending has already been betrayed by someone who knew its walls. Trust the walls. Not the men who built them."),
-    Item("Arcane Primer Vol. I",     25, "uncommon", "book",
-         "Glows faintly at page 7.",
-         [],
-         lore="Magic does not come from the caster. It passes through them. The damage it does to the untrained is the cost of being a poor conductor."),
-    Item("The Cursed Inventory",     30, "rare",     "book",
-         "The cover repels the eye.",
-         [],
-         lore="Of the 40 cursed relics catalogued before the author disappeared, 38 were found with people who insisted they were harmless. Two are still missing."),
+         lore="Every city worth defending has already been lost once. The Almanac is a record of what that costs — in coin, in blood, and in the kind of reputation that doesn't recover."),
 ]
 
-# ── COMBINED POOL ─────────────────────────────────────────────────────────────
-ITEMS = (
-    TRADE_ITEMS
-    + WEAPON_ITEMS
-    + ARMOR_ITEMS
-    + ACCESSORY_ITEMS
-    + POTION_ITEMS
-    + SUPPLY_ITEMS
-    + BOOK_ITEMS
-    + HUNT_ITEMS
-    + FORAGE_ITEMS
-    + GRIMTOTEM_ITEMS
+# ── Combined lookup ───────────────────────────────────────────────────────────
+
+ALL_ITEMS = (
+    WEAPON_ITEMS + ARMOR_ITEMS + ACCESSORY_ITEMS +
+    POTION_ITEMS + SUPPLY_ITEMS + TRADE_ITEMS +
+    GRIMTOTEM_ITEMS + FORAGE_ITEMS + HUNT_ITEMS + BOOK_ITEMS
 )
 
-ITEM_LOOKUP = {item.name: item for item in ITEMS}
+ITEM_LOOKUP = {item.name: item for item in ALL_ITEMS}
 
 
-def get_items_by_rarity(rarity: str):
-    return [i for i in ITEMS if i.rarity == rarity]
-
-def get_items_by_type(item_type: str):
-    return [i for i in ITEMS if i.item_type == item_type]
-
-# Items that can drop as loot (exclude potions and books from random drops —
-# those are bought or found in specific contexts)
-LOOT_POOL = [
-    i for i in ITEMS
-    if i.item_type not in ("potion",) and not i.cursed
-]
+def get_items_by_rarity(rarity: str, item_type: str = None):
+    """Return all items of a given rarity, optionally filtered by item_type."""
+    return [
+        i for i in ALL_ITEMS
+        if i.rarity == rarity and (item_type is None or i.item_type == item_type)
+    ]
