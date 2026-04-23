@@ -31,8 +31,9 @@ class Enemy:
     description: str
     biomes: List[str]
     loot_bias: str
-    enemy_type: str        = "combat"
-    enemy_spells: List[str] = field(default_factory=list)
+    enemy_type: str          = "combat"
+    enemy_spells: List[str]  = field(default_factory=list)
+    moves: List[str]         = field(default_factory=list)
 
     def is_alive(self) -> bool:
         return self.hp > 0
@@ -54,6 +55,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "common",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Strike", "Stab", "Shove"],
     },
     {
         "name":           "Road Bandit",
@@ -67,6 +69,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "common",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Slash", "Pierce", "Parry"],
     },
     {
         "name":           "Forest Wolf",
@@ -80,6 +83,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "uncommon",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Strike", "Shove", "Pummel"],
     },
     {
         "name":           "Sand Scorpion",
@@ -93,6 +97,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "uncommon",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Stab", "Bash", "Shove"],
     },
     {
         "name":           "Mountain Troll",
@@ -106,6 +111,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "rare",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Bash", "Overhead", "Shove"],
     },
     {
         "name":           "Cave Spider",
@@ -119,6 +125,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "uncommon",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Stab", "Feint", "Strike"],
     },
     {
         "name":           "Skeleton Warrior",
@@ -132,6 +139,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "rare",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Slash", "Bash", "Pierce"],
     },
     {
         "name":           "Wild Boar",
@@ -145,6 +153,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "uncommon",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Shove", "Hack", "Overhead"],
     },
     {
         "name":           "Highwayman",
@@ -158,6 +167,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "uncommon",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Slash", "Feint", "Pierce"],
     },
     {
         "name":           "Bandit Cutthroat",
@@ -171,6 +181,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "common",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Stab", "Feint", "Slash"],
     },
     {
         "name":           "Castle Guard",
@@ -184,6 +195,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "rare",
         "enemy_type":     "combat",
         "enemy_spells":   [],
+        "moves":          ["Slash", "Bash", "Parry"],
     },
 
     # ── Mage-type enemies ─────────────────────────────────────────────────────
@@ -200,6 +212,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "uncommon",
         "enemy_type":     "half_mage",
         "enemy_spells":   ["Frost Bolt", "Shock"],
+        "moves":          ["Strike", "Stab", "Shove"],
     },
     {
         "name":           "Bandit Sorcerer",
@@ -211,8 +224,9 @@ ENEMY_TEMPLATES = [
         "description":    "A road bandit who traded steel for stolen scrolls. More dangerous for it.",
         "biomes":         ["forest", "desert", "mountain"],
         "loot_bias":      "uncommon",
-        "enemy_type":     "half_mage",
+        "enemy_type":     "mage",       # PT10 fix: sorcerers cast spells (65% chance), not martial
         "enemy_spells":   ["Fireball", "Shock", "Frost Bolt"],
+        "moves":          ["Strike", "Slash", "Pierce"],
     },
     {
         "name":           "Skeleton Mage",
@@ -226,6 +240,7 @@ ENEMY_TEMPLATES = [
         "loot_bias":      "rare",
         "enemy_type":     "mage",
         "enemy_spells":   ["Frost Bolt", "Shadow Step", "Drain Life"],
+        "moves":          ["Staff Strike", "Strike", "Channel"],
     },
 ]
 
@@ -245,6 +260,7 @@ def spawn_enemy(template: dict) -> Enemy:
         loot_bias     = template["loot_bias"],
         enemy_type    = template.get("enemy_type", "combat"),
         enemy_spells  = list(template.get("enemy_spells", [])),
+        moves         = list(template.get("moves", ["Strike"])),
     )
 
 

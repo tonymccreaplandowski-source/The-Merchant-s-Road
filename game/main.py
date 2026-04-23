@@ -8,7 +8,7 @@ import sys
 import time
 import random
 
-from engine.player  import Player, create_player, SKILLS, SKILL_DESCRIPTIONS, STARTING_POINTS, MIN_SKILL, MAX_INVENTORY
+from engine.player  import Player, create_player, SKILLS, SKILL_DESCRIPTIONS, STARTING_POINTS, MIN_SKILL, MAX_INVENTORY, MAX_CREATION_SKILL, DOMINANT_SKILL_VALUE
 from engine.world   import start_travel, take_road_step, abort_travel
 from engine.combat  import (
     fresh_state, roll_initiative, calculate_damage,
@@ -31,6 +31,8 @@ from ui.display     import (
     skill_bar, hp_bar, mana_bar, beep, play_melody,
     typewrite, show_journal,
     start_ambient_loop, stop_ambient_loop, resume_ambient_loop,
+    reset_combat_message,
+    play_battle_music, stop_battle_music,
 )
 
 
@@ -130,6 +132,53 @@ MERCHANT_TYPES = [
     ("Mage Merchant",     "Grimoires, tomes, and spells for those with the gift.", _pool_mage,              "Magic"),
 ]
 
+# Greeting lines by merchant type — shown when the player approaches.
+# Multiple entries per type; one is drawn at random each visit.
+MERCHANT_GREETINGS = {
+    "Blacksmith": [
+        "Steel doesn't lie. Let's see what you need.",
+        "I don't do small talk. You buying or not?",
+        "Good timing. Just finished a batch.",
+        "You look like you've been in a fight. Want to be better prepared for the next one?",
+    ],
+    "Apothecary": [
+        "Come closer — you look pale. I may have something for that.",
+        "The road takes its toll. I have remedies.",
+        "Everything I sell, I've tested. Not always on myself.",
+        "Healing is just chemistry. Don't let the mystics tell you otherwise.",
+    ],
+    "Librarian": [
+        "Quietly. I prefer quiet customers.",
+        "Knowledge is weight. Worth carrying.",
+        "I don't ask what you're looking for. I just show you what I have.",
+        "Most people don't read. That's why most people don't survive.",
+    ],
+    "Survival Trader": [
+        "First rule of the road: never leave without rope.",
+        "Rations, firewood, the basics. You'd be surprised how many forget them.",
+        "The road doesn't care about your skills. It cares whether you packed right.",
+        "You heading out again? Let's make sure you're ready this time.",
+    ],
+    "Dungeoneering Co.": [
+        "You look like someone who goes places they shouldn't. I respect that.",
+        "A lantern and a good lock pick. Everything else is a liability.",
+        "The dark is predictable. It's the things in the dark that aren't.",
+        "We supply half the dungeoneers in this region. The surviving half.",
+    ],
+    "Leatherworker": [
+        "Quiet gear for quiet people. Take a look.",
+        "Mail makes noise. Leather doesn't. Worth thinking about.",
+        "A good vest has saved more lives than a sword. Probably.",
+        "I don't ask what you use it for. Just whether it fits.",
+    ],
+    "Mage Merchant": [
+        "The grimtotems choose their readers. I just carry them.",
+        "Magic skill means nothing without the words. I sell the words.",
+        "Don't touch anything you haven't paid for. Some of these... respond.",
+        "I've had this stock since before the last king. Some of it longer.",
+    ],
+}
+
 
 def _generate_merchant(used_names: set) -> dict:
     """Spawn a single merchant with a random type and stock."""
@@ -173,13 +222,43 @@ def _generate_merchant_typed(mtype_tuple: tuple, used_names: set) -> dict:
     }
 
 
+# PT10 fix: merchant availability system.
+# Guaranteed merchants are always present when the player enters a city.
+# Variable merchants have a 33% chance of being in town on any given day.
+# Merchants persist until the player leaves the city.
+_GUARANTEED_MERCHANTS = {"Blacksmith", "Survival Trader", "Librarian", "Dungeoneering Co."}
+_VARIABLE_MERCHANT_CHANCE = 0.33
+
+
 def generate_city_merchants(city_key: str) -> list:
-    """Return 3 merchants. Slot 1 is always a Survival Trader (basic supplies guaranteed)."""
+    """
+    Generate all merchant types with availability rolled per visit.
+    Returns a list of merchant dicts, each with an "available" key.
+    Guaranteed types are always available. Variable types roll 33%.
+    """
     used = set()
-    supply_type = next(m for m in MERCHANT_TYPES if m[0] == "Survival Trader")
-    guaranteed  = _generate_merchant_typed(supply_type, used)
-    other_two   = [_generate_merchant(used) for _ in range(2)]
-    return [guaranteed] + other_two
+    merchants = []
+    for mtype_tuple in MERCHANT_TYPES:
+        mtype_label = mtype_tuple[0]
+        is_guaranteed = mtype_label in _GUARANTEED_MERCHANTS
+        available = is_guaranteed or (random.random() < _VARIABLE_MERCHANT_CHANCE)
+        if available:
+            m = _generate_merchant_typed(mtype_tuple, used)
+        else:
+            # Placeholder — not in town
+            m = {
+                "name":          mtype_label,
+                "type":          mtype_label,
+                "tagline":       "Not in town today.",
+                "leading_skill": mtype_tuple[3],
+                "stock":         [],
+                "sold_items":    [],
+                "discount":      1.0,
+                "available":     False,
+            }
+        m["available"] = available
+        merchants.append(m)
+    return merchants
 
 
 def _training_cost(level: int) -> int:
@@ -261,9 +340,18 @@ def use_potion(player: Player, potion, state: dict) -> str:
         gained_hp = player.hp - before_hp
         return f"You eat the {potion.name}. +{gained_hp} HP, +10 Mana."
     if effect == "berries_unknown":
-        if random.random() < 0.20:
-            player.take_damage(15)
-            return f"You eat the {potion.name}. They were poisonous. -15 HP!"
+        if random.random() < 0.05:
+            sick_skill   = random.choice(SKILLS)
+            sick_penalty = random.randint(5, 15)
+            sick_days    = random.randint(1, 5)
+            player.sick_skill   = sick_skill
+            player.sick_penalty = sick_penalty
+            player.sick_days    = sick_days
+            return (
+                f"You eat the {potion.name}. Something was wrong with them. "
+                f"Your {sick_skill} feels dulled. "
+                f"(-{sick_penalty} {sick_skill} for {sick_days} day{'s' if sick_days != 1 else ''})"
+            )
         before = player.hp
         player.heal(10)
         gained = player.hp - before
@@ -271,7 +359,446 @@ def use_potion(player: Player, potion, state: dict) -> str:
     return f"You use the {potion.name}."
 
 
+# ── Out-of-combat item use ────────────────────────────────────────────────────
+# PT10 fix: allow consumables (bandages, rations, potions) to be used from the
+# road bag screen as well as in combat.
+
+USABLE_EFFECTS_OUTSIDE_COMBAT = {
+    "heal_15", "heal_20", "heal_30", "heal_35", "heal_40",
+    "mana_25", "full_restore", "map_bonus", "mushroom_wild",
+    "berries_unknown", "torch",
+}
+
+
+def use_item_outside_combat(player: Player, item) -> str:
+    """Apply a consumable effect outside of combat. Returns a message string."""
+    effect = item.effect or ""
+    if effect == "heal_15":
+        before = player.hp; player.heal(15)
+        return f"You eat the {item.name}. +{player.hp - before} HP."
+    if effect == "heal_20":
+        before = player.hp; player.heal(20)
+        return f"You use the {item.name}. +{player.hp - before} HP."
+    if effect == "heal_30":
+        before = player.hp; player.heal(30)
+        return f"You drink the {item.name}. +{player.hp - before} HP."
+    if effect == "heal_35":
+        before = player.hp; player.heal(35)
+        return f"You eat the {item.name}. +{player.hp - before} HP."
+    if effect == "heal_40":
+        before = player.hp; player.heal(40)
+        return f"You eat the {item.name}. +{player.hp - before} HP."
+    if effect == "mana_25":
+        before = player.mana; player.restore_mana(25)
+        return f"You drink the {item.name}. +{player.mana - before} Mana."
+    if effect == "full_restore":
+        player.heal(player.max_hp); player.restore_mana()
+        return f"You drink the {item.name}. HP and Mana fully restored!"
+    if effect == "map_bonus":
+        player.map_bonus = True
+        return f"You study the {item.name}. Nearby locations will be easier to find."
+    if effect == "torch":
+        return f"You light the {item.name}. The dark pulls back a little."
+    if effect == "mushroom_wild":
+        before_hp = player.hp; player.heal(15); player.restore_mana(10)
+        return f"You eat the {item.name}. +{player.hp - before_hp} HP, +10 Mana."
+    if effect == "berries_unknown":
+        if random.random() < 0.05:
+            sick_skill   = random.choice(SKILLS)
+            sick_penalty = random.randint(5, 15)
+            sick_days    = random.randint(1, 5)
+            player.sick_skill   = sick_skill
+            player.sick_penalty = sick_penalty
+            player.sick_days    = sick_days
+            return (
+                f"You eat the {item.name}. Something was wrong with them. "
+                f"Your {sick_skill} feels dulled. "
+                f"(-{sick_penalty} {sick_skill} for {sick_days} day{'s' if sick_days != 1 else ''})"
+            )
+        before = player.hp; player.heal(10)
+        return f"You eat the {item.name}. Tasted fine. +{player.hp - before} HP."
+    return f"You use the {item.name}."
+
+
+def use_items_screen(player: Player):
+    """Let the player use consumables outside of combat (road / bag screen)."""
+    while True:
+        usable = [
+            i for i in player.inventory
+            if (i.item_type in ("potion", "consumable"))
+            and (i.effect in USABLE_EFFECTS_OUTSIDE_COMBAT)
+        ]
+
+        clear()
+        section("USE ITEM")
+        print()
+
+        if not usable:
+            print(f"  {C.BBLACK}You have no usable items in your pack.{C.RESET}")
+            print()
+            pause()
+            return
+
+        options = []
+        for item in usable:
+            color = RARITY_COLOR.get(item.rarity, C.WHITE)
+            options.append(
+                f"{color}{item.name}{C.RESET}  "
+                f"{C.DIM}{item.description}{C.RESET}"
+            )
+        options.append(f"{C.BBLACK}← Back{C.RESET}")
+
+        choice = prompt_choice(options, "Use which item?")
+        if choice == len(options):
+            return
+
+        item = usable[choice - 1]
+        msg  = use_item_outside_combat(player, item)
+        player.remove_item(item)
+        print(f"\n  {C.BGREEN}{msg}{C.RESET}")
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+        pause("Press Enter to continue...")
+
+
 # (generate_city_stock removed — replaced by generate_city_merchants above)
+
+
+# ════════════════════════════════════════════════════════════════
+#   ROAD FLAVOR LINES
+# ════════════════════════════════════════════════════════════════
+
+ROAD_FLAVOR = {
+    "forest": {
+        "early": [
+            "The canopy closes overhead. The city is already out of sight.",
+            "Birdsong fills the air. The road ahead is clear — for now.",
+            "You pass a milestone half-buried in moss. The name has worn away.",
+            "A deer watches you from the treeline, then vanishes without sound.",
+            "The forest smells of rain and old wood. Your boots find soft earth.",
+        ],
+        "late": [
+            "The trees thin ahead. You can feel the journey nearing its end.",
+            "The road widens slightly — a sign that civilisation is close.",
+            "Through the branches you catch a glimpse of smoke on the horizon.",
+            "Your legs carry old aches now. The destination keeps you moving.",
+            "The forest releases you slowly, tree by tree, into the open.",
+        ],
+    },
+    "desert": {
+        "early": [
+            "The heat settles over you like a second coat. You're glad you packed water.",
+            "The road turns to packed sand. Your shadow stretches long behind you.",
+            "Dust rises with every step. The horizon shimmers in the heat.",
+            "A vulture circles high overhead. It is patient. You intend to disappoint it.",
+            "The city fades behind you into pale haze. The desert offers no shelter.",
+        ],
+        "late": [
+            "The sand gives way to grit and gravel. You're nearly through.",
+            "You can smell the settlement before you see it — cookfires and animals.",
+            "The heat relents slightly. Walls appear in the distance.",
+            "The road hardens underfoot. Other travellers have worn this path deep.",
+            "You count the remaining distance in steps now, not miles.",
+        ],
+    },
+    "mountain": {
+        "early": [
+            "The path climbs sharply. The air thins and cools with every hundred feet.",
+            "Wind cuts across the ridge with no warning. You pull your coat tighter.",
+            "Loose stone skitters down the slope below you. You watch your footing.",
+            "The road narrows to a ledge between rock and sky. No room for mistakes.",
+            "Cloud shadow moves across the peak above. The mountain seems indifferent.",
+        ],
+        "late": [
+            "The descent begins. Easier on the lungs, harder on the knees.",
+            "Smoke from hearth fires drifts up from the valley below.",
+            "The mountain releases its grip on the road. Easier ground ahead.",
+            "You can hear the settlement now — iron on iron, voices carrying on the wind.",
+            "The worst of the climb is behind you. The path evens out.",
+        ],
+    },
+    "cave": {
+        "early": [
+            "The road dips into shadow. Even outdoors here feels dim and enclosed.",
+            "The ground is damp. Water drips somewhere in the dark nearby.",
+            "The air carries a mineral chill that the sun doesn't quite reach.",
+            "Formations of rock rise on either side, old and indifferent.",
+            "Your torch casts long shadows. The road feels narrower than it is.",
+        ],
+        "late": [
+            "Daylight appears in the distance. You've been counting on it.",
+            "The air warms slightly. You're nearly out of the dark.",
+            "The dripping fades behind you. Dry ground ahead.",
+            "The road rises toward open sky. You pick up the pace without meaning to.",
+            "One last stretch of shadow, then the open road returns.",
+        ],
+    },
+}
+
+_FLAVOR_DEFAULT = {
+    "early": [
+        "The road stretches out ahead. You press on.",
+        "Miles pass beneath your feet. The world is quiet.",
+        "You walk. The road asks nothing more of you yet.",
+    ],
+    "late": [
+        "The destination is close. You can feel it.",
+        "Not far now. The road has earned its end.",
+        "The last miles are always the longest.",
+    ],
+}
+
+
+def _road_flavor_line(biome: str, step: int, total: int) -> str:
+    """Return a random biome-aware, phase-aware flavor line for the current road step."""
+    pool   = ROAD_FLAVOR.get(biome, _FLAVOR_DEFAULT)
+    phase  = "early" if total == 0 or step < total // 2 else "late"
+    lines  = pool.get(phase, _FLAVOR_DEFAULT[phase])
+    return random.choice(lines)
+
+
+# ════════════════════════════════════════════════════════════════
+#   CHARACTER CLASSES
+# ════════════════════════════════════════════════════════════════
+
+CLASS_CHOICES = [
+    {
+        "name":    "Mage",
+        "skills":  ["Magic", "Speechcraft"],
+        "lore":    [
+            "The words come first. The fire follows.",
+            "You studied in a place that no longer has a name. What you learned there cannot be untaught.",
+        ],
+    },
+    {
+        "name":    "Warrior",
+        "skills":  ["Martial", "Survival"],
+        "lore":    [
+            "The road is not a place. It is a condition.",
+            "You have buried three travelling companions. You are still walking.",
+        ],
+    },
+    {
+        "name":    "Knight",
+        "skills":  ["Martial", "Speechcraft"],
+        "lore":    [
+            "A blade opens doors. A word keeps them open.",
+            "You once served a lord whose name is no longer spoken in the right company.",
+        ],
+    },
+    {
+        "name":    "Adventurer",
+        "skills":  ["Martial", "Dungeoneering"],
+        "lore":    [
+            "There is always another door below the last one.",
+            "You carry the marks of three separate cave-ins and have never once considered turning back.",
+        ],
+    },
+    {
+        "name":    "Battlemage",
+        "skills":  ["Martial", "Magic"],
+        "lore":    [
+            "Steel breaks. The arcane does not. You wield both.",
+            "The scar on your casting hand is from the first time you tried to hold a sword and a spell at once. You got better.",
+        ],
+    },
+    {
+        "name":    "Bard",
+        "skills":  ["Merchantilism", "Survival"],
+        "lore":    [
+            "Every city has a price. Every secret has a song.",
+            "You have been asked to leave fourteen establishments. You consider this a reasonable average.",
+        ],
+    },
+    {
+        "name":    "Assassin",
+        "skills":  ["Martial", "Stealth"],
+        "lore":    [
+            "The target never knew your name. That was the point.",
+            "You do not remember your first contract. You remember the second — it was harder to walk away from.",
+        ],
+    },
+    {
+        "name":    "Ranger",
+        "skills":  ["Stealth", "Survival"],
+        "lore":    [
+            "The forest does not hide from you. You have simply learned its language.",
+            "You spent three winters alone in the mountain passes. The quiet still feels like home.",
+        ],
+    },
+    {
+        "name":    "Smuggler",
+        "skills":  ["Stealth", "Merchantilism"],
+        "lore":    [
+            "The best goods are the ones that don't appear on any manifest.",
+            "You know every guard rotation on the Merchant's Road. Some of them know you back.",
+        ],
+    },
+    {
+        "name":    "Scholar",
+        "skills":  ["Magic", "Dungeoneering"],
+        "lore":    [
+            "Knowledge does not wait to be found. It hides, specifically, from the unworthy.",
+            "The texts you carry are not permitted in three of the five cities. You have memorised the routes.",
+        ],
+    },
+    {
+        "name":    "Merchant",
+        "skills":  ["Merchantilism", "Speechcraft"],
+        "lore":    [
+            "The road is long. Profit is longer.",
+            "You have survived ambush, drought, plague season, and a bad deal in Ashenvale. The road has not broken you yet.",
+        ],
+    },
+    {
+        "name":    "Pathfinder",
+        "skills":  ["Survival", "Dungeoneering"],
+        "lore":    [
+            "You go first. That is the arrangement.",
+            "There is no map for where you have been. You stopped needing maps a long time ago.",
+        ],
+    },
+    {
+        "name":    "Alchemist",
+        "skills":  ["Magic", "Merchantilism"],
+        "lore":    [
+            "Everything has a formula. Everything has a price. These are not separate observations.",
+            "The reagents in your pack are worth more than most men earn in a season — and considerably more dangerous.",
+        ],
+    },
+    {
+        "name":    "Infiltrator",
+        "skills":  ["Stealth", "Speechcraft"],
+        "lore":    [
+            "You were in the room. No one saw you leave.",
+            "You have worn seven names on this road. Only one of them is yours, and you do not use it lightly.",
+        ],
+    },
+    {
+        "name":    "Mercenary",
+        "skills":  ["Martial", "Merchantilism"],
+        "lore":    [
+            "The cause changes. The coin does not.",
+            "You have fought under four banners. None of them are flying anymore.",
+        ],
+    },
+    {
+        "name":    "Hexblade",
+        "skills":  ["Stealth", "Magic"],
+        "lore":    [
+            "The dark is not a hiding place. It is a weapon.",
+            "You learned your spells from a source you do not name in polite company. It has not asked for payment yet.",
+        ],
+    },
+    {
+        "name":    "Delver",
+        "skills":  ["Stealth", "Dungeoneering"],
+        "lore":    [
+            "Every ruin has a way in. You have yet to find one that doesn't.",
+            "You move through buried places like you were made for them. Some days it feels that way.",
+        ],
+    },
+    {
+        "name":    "Shaman",
+        "skills":  ["Survival", "Magic"],
+        "lore":    [
+            "The land speaks. You have learned to stop interrupting.",
+            "You carry no grimoire. The forest remembers what books forget.",
+        ],
+    },
+    {
+        "name":    "Wayfarer",
+        "skills":  ["Survival", "Speechcraft"],
+        "lore":    [
+            "You have walked every road on this map and a few that aren't on it.",
+            "People open doors for you. You have never been entirely sure why, and you have never stopped to ask.",
+        ],
+    },
+    {
+        "name":    "Chronicler",
+        "skills":  ["Speechcraft", "Dungeoneering"],
+        "lore":    [
+            "Everything that was buried was buried for a reason. You write it down anyway.",
+            "Three cities have tried to confiscate your notes. You still have them.",
+        ],
+    },
+    {
+        "name":    "Prospector",
+        "skills":  ["Merchantilism", "Dungeoneering"],
+        "lore":    [
+            "There is no ruin too deep if the price is right.",
+            "You can assess the value of a tomb before you've opened it. You've been wrong twice.",
+        ],
+    },
+]
+
+
+def class_selection_screen() -> dict:
+    """
+    Display class selection. Returns the chosen class dict.
+    Shows all 21 classes in pages of 7, with confirm step.
+    """
+    PAGE_SIZE = 7
+    page      = 0
+    total     = len(CLASS_CHOICES)
+    pages     = (total + PAGE_SIZE - 1) // PAGE_SIZE
+
+    while True:
+        clear()
+        title_screen("CHOOSE YOUR CLASS")
+        start = page * PAGE_SIZE
+        chunk = CLASS_CHOICES[start:start + PAGE_SIZE]
+
+        print(f"  {C.DIM}Page {page + 1}/{pages}   Each class sets two dominant skills to {DOMINANT_SKILL_VALUE}.{C.RESET}")
+        print()
+
+        options = []
+        for cls in chunk:
+            s1, s2 = cls["skills"]
+            options.append(
+                f"{C.BYELLOW}{cls['name']:<14}{C.RESET}  "
+                f"{C.BCYAN}{s1}{C.RESET} + {C.BCYAN}{s2}{C.RESET}"
+            )
+        if page < pages - 1:
+            options.append(f"{C.DIM}Next page →{C.RESET}")
+        if page > 0:
+            options.append(f"{C.DIM}← Previous page{C.RESET}")
+
+        choice = prompt_choice(options, "Select class (or page)")
+
+        # Navigation
+        if page < pages - 1 and choice == len(options) - (1 if page > 0 else 0):
+            page += 1
+            continue
+        if page > 0 and choice == len(options):
+            page -= 1
+            continue
+
+        # Class selected — show confirm screen
+        cls = chunk[choice - 1]
+        clear()
+        title_screen(cls["name"].upper())
+        print()
+        s1, s2 = cls["skills"]
+        print(f"  {C.BCYAN}Dominant skills:{C.RESET}  {C.BYELLOW}{s1}{C.RESET} {DOMINANT_SKILL_VALUE}  +  {C.BYELLOW}{s2}{C.RESET} {DOMINANT_SKILL_VALUE}")
+        print()
+        hr("─")
+        print()
+        for line in cls["lore"]:
+            print(f"  {C.DIM}\"{line}\"{C.RESET}")
+        print()
+        hr("─")
+        print()
+        print(f"  {C.DIM}After choosing, you will distribute {STARTING_POINTS - DOMINANT_SKILL_VALUE * 2} points")
+        print(f"  across your remaining 5 skills (min {MIN_SKILL}, max {MAX_CREATION_SKILL} each).{C.RESET}")
+        print()
+
+        confirm = prompt_choice([
+            f"{C.BGREEN}Choose {cls['name']}{C.RESET}",
+            f"{C.BBLACK}Go back{C.RESET}",
+        ], "Confirm?")
+
+        if confirm == 1:
+            return cls
 
 
 # ════════════════════════════════════════════════════════════════
@@ -292,30 +819,43 @@ def character_creation() -> Player:
         name = "Traveller"
         break
 
+    # ── Step 1: Class selection ─────────────────────────────────────────────
+    chosen_class  = class_selection_screen()
+    dominant_s1, dominant_s2 = chosen_class["skills"]
+
+    # Pre-fill dominant skills
+    allocations = {skill: MIN_SKILL for skill in SKILLS}
+    allocations[dominant_s1] = DOMINANT_SKILL_VALUE
+    allocations[dominant_s2] = DOMINANT_SKILL_VALUE
+
+    # ── Step 2: Minor skill allocation ─────────────────────────────────────
+    minor_skills = [s for s in SKILLS if s not in (dominant_s1, dominant_s2)]
+    free_points  = STARTING_POINTS - DOMINANT_SKILL_VALUE * 2
+    remaining    = free_points
+
+    clear()
+    title_screen(f"{chosen_class['name'].upper()} — SKILL ALLOCATION")
+    print(f"  {C.BYELLOW}{dominant_s1}{C.RESET} and {C.BYELLOW}{dominant_s2}{C.RESET} are set to {DOMINANT_SKILL_VALUE} each.")
     print()
-    section("SKILL ALLOCATION")
-    print(f"  {C.DIM}Distribute {C.RESET}{C.BYELLOW}{STARTING_POINTS}{C.RESET}{C.DIM} points across your 7 skills.")
-    print(f"  Minimum per skill: {MIN_SKILL}    Maximum per skill: 100{C.RESET}")
+    print(f"  {C.DIM}Distribute {C.RESET}{C.BYELLOW}{free_points}{C.RESET}{C.DIM} points across your remaining 5 skills.")
+    print(f"  Minimum per skill: {MIN_SKILL}    Maximum per skill: {MAX_CREATION_SKILL}  {C.RESET}{C.DIM}(skills can exceed this through play){C.RESET}")
     print()
 
-    for skill in SKILLS:
+    for skill in minor_skills:
         print(f"  {C.BCYAN}{skill:<16}{C.RESET}  {C.DIM}{SKILL_DESCRIPTIONS[skill]}{C.RESET}")
     print()
 
-    allocations = {}
-    remaining   = STARTING_POINTS
-
-    for i, skill in enumerate(SKILLS):
-        is_last = (i == len(SKILLS) - 1)
+    for i, skill in enumerate(minor_skills):
+        is_last = (i == len(minor_skills) - 1)
         while True:
             if is_last:
-                auto = max(MIN_SKILL, min(100, remaining))
+                auto = max(MIN_SKILL, min(MAX_CREATION_SKILL, remaining))
                 print(f"  {C.BCYAN}{skill:<16}{C.RESET}  → auto-assigned {C.BYELLOW}{auto}{C.RESET} (remaining points)")
                 allocations[skill] = auto
                 remaining -= auto
                 break
             try:
-                max_allowed = min(100, remaining - MIN_SKILL * (len(SKILLS) - i - 1))
+                max_allowed = min(MAX_CREATION_SKILL, remaining - MIN_SKILL * (len(minor_skills) - i - 1))
                 print(f"  {C.DIM}Remaining: {remaining}  |  Min: {MIN_SKILL}  Max here: {max_allowed}{C.RESET}")
                 raw = input(f"  {C.BCYAN}{skill:<16}{C.RESET}  → ").strip()
                 val = int(raw)
@@ -353,6 +893,7 @@ def character_creation() -> Player:
 
     print()
     print(f"  {C.BGREEN}✓ Character created!{C.RESET}  "
+          f"{C.BYELLOW}{chosen_class['name']}{C.RESET}  —  "
           f"Total points spent: {sum(allocations.values())}")
     print(f"  {C.DIM}You begin in Rabenmark with {player.gold}gp.{C.RESET}")
     print()
@@ -380,7 +921,8 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
     """
     state        = fresh_state()
     stop_ambient_loop()          # silence ambient while combat plays
-    play_melody("combat_start")
+    reset_combat_message()       # PT10 fix: ensure first message always animates
+    play_battle_music()          # start looping battle theme
     player_first = True if force_first else roll_initiative(player, enemy)
     if force_first:
         state["enemy_staggered"] = 2   # surprised enemy: -10 combat_skill for 2 rounds
@@ -409,6 +951,8 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
     # ── Main combat loop ──────────────────────────────────────────────────────
     while player.is_alive() and enemy.is_alive():
         show_combat_screen(player, enemy, message)
+        if message:
+            pause("  Press Enter...")
 
         top = prompt_choice([
             f"{C.BOLD}Attack{C.RESET}   — weapon moves",
@@ -467,9 +1011,12 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
 
         # ── CAST ─────────────────────────────────────────────────────────────
         elif top == 2:
-            available = get_available_spells(player.skill("Magic"))
+            available = get_available_spells(player.skill("Magic"), player.learned_spells)
             if not available:
-                message = "Your Magic skill is too low to cast any spells."
+                if player.learned_spells:
+                    message = "Your Magic skill is too low to cast any of your known spells."
+                else:
+                    message = "You have not learned any spells. Purchase a Grimtotem from a Mage Merchant."
                 continue
 
             spell_options = []
@@ -523,8 +1070,12 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
             action_taken = True
 
         # ── ITEMS ────────────────────────────────────────────────────────────
+        # PT10 fix: include consumables (bandages, rations) alongside potions
         elif top == 3:
-            potions = [i for i in player.inventory if i.item_type == "potion"]
+            potions = [
+                i for i in player.inventory
+                if i.item_type in ("potion", "consumable") and i.effect
+            ]
             if not potions:
                 show_combat_screen(player, enemy, message)
                 print(f"  {C.BRED}You're out of combat supplies.{C.RESET}")
@@ -557,6 +1108,7 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
                 show_combat_screen(player, enemy, "You slip away into the shadows.")
                 beep("menu")
                 time.sleep(1.5)
+                stop_battle_music()
                 resume_ambient_loop()   # resume correct context on escape
                 return False
             # Failed flee → enemy attacks this turn
@@ -580,11 +1132,13 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
     # ── Combat end ────────────────────────────────────────────────────────────
     if not player.is_alive():
         show_combat_screen(player, enemy, "You collapse. The world fades to black...")
+        stop_battle_music()
         play_melody("death")
         time.sleep(2)
         return False
 
     show_combat_screen(player, enemy, f"Victory! The {enemy.name} falls!")
+    stop_battle_music()
     play_melody("victory")
     time.sleep(1.5)
     resume_ambient_loop()   # resume correct context after victory fanfare
@@ -783,16 +1337,26 @@ def equip_screen(player: Player):
             # ── Equip ─────────────────────────────────────────────────────
             item = equippable[choice - 1]
             if item.cursed:
+                # PT10 fix: show specific curse effect, not just a vague warning
+                _curse_desc = {
+                    "reduce_max_hp": f"reduces your maximum HP by 20",
+                    "drain_hp":      f"drains HP each round in combat",
+                }.get(item.curse_effect or "", "applies a harmful enchantment")
                 clear()
-                print(f"\n  {C.BRED}{C.BOLD}⚠ This item is cursed!{C.RESET}")
-                print(f"  {C.DIM}{item.name} carries a dark enchantment. Equipping it may harm you.{C.RESET}")
+                print(f"\n  {C.BRED}{C.BOLD}⚠  This item is CURSED!{C.RESET}")
+                print(f"  {C.BRED}{item.name}{C.RESET}{C.DIM}: {_curse_desc}.{C.RESET}")
+                if item.stat_bonuses:
+                    _parts = [f"{'+' if v >= 0 else ''}{v} {k}" for k, v in item.stat_bonuses.items()]
+                    print(f"  {C.DIM}Bonuses: {', '.join(_parts)}{C.RESET}")
+                print()
                 confirm = prompt_choice([
-                    f"Equip anyway  {C.BRED}(accept the risk){C.RESET}",
+                    f"Equip anyway  {C.BRED}(accept the curse){C.RESET}",
                     "Cancel",
                 ])
                 if confirm == 2:
                     continue
 
+            prev_max_hp = player.max_hp
             prev = player.equip(item)
             player.remove_item(item)
             if prev:
@@ -801,6 +1365,9 @@ def equip_screen(player: Player):
                 print(f"  {prev.name} returned to inventory.{C.RESET}")
             else:
                 print(f"\n  {C.BGREEN}Equipped {item.name}.{C.RESET}")
+            # PT10 fix: show the actual stat change if a curse was applied
+            if item.cursed and item.curse_effect == "reduce_max_hp" and player.max_hp < prev_max_hp:
+                print(f"  {C.BRED}Curse applied: Max HP {prev_max_hp} → {player.max_hp}.{C.RESET}")
             time.sleep(1.0)
 
         else:
@@ -994,7 +1561,15 @@ def merchant_screen(player: Player, city, merchant: dict):
 
         clear()
         title_screen(f"{merchant['name'].upper()} — {merchant['type'].upper()}")
-        print(f"  {C.DIM}\"{merchant['tagline']}\"{C.RESET}{disc_str}")
+        # Greeting — shown on first visit only; stored on the merchant dict
+        if not merchant.get("greeted"):
+            greetings = MERCHANT_GREETINGS.get(merchant["type"], [])
+            if greetings:
+                greeting = merchant.setdefault("greeting", random.choice(greetings))
+                print(f"  {C.BYELLOW}\"{greeting}\"{C.RESET}")
+            merchant["greeted"] = True
+        else:
+            print(f"  {C.DIM}\"{merchant['tagline']}\"{C.RESET}{disc_str}")
         print(f"  {C.DIM}[{city.biome.capitalize()} pricing]{C.RESET}")
         print()
         print(f"  {C.BYELLOW}Your gold: {player.gold}gp{C.RESET}  "
@@ -1021,103 +1596,110 @@ def merchant_screen(player: Player, city, merchant: dict):
             continue
 
         # ════ SELL TAB ════════════════════════════════════════════════════
+        # PT10 fix: inner while loop keeps player in sell screen until they
+        # explicitly choose to leave, instead of returning to merchant menu.
         if tab == 1:
-            if not player.inventory:
-                print(f"\n  {C.BBLACK}You have nothing to sell.{C.RESET}")
-                pause("Press Enter to go back...")
-                continue
+            while True:
+                disc = merchant.get("discount", 1.0)
+                if not player.inventory:
+                    print(f"\n  {C.BBLACK}You have nothing to sell.{C.RESET}")
+                    pause("Press Enter to go back...")
+                    break
 
-            clear()
-            title_screen(f"SELL — {merchant['name'].upper()}")
-            print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}")
-            print()
+                clear()
+                title_screen(f"SELL — {merchant['name'].upper()}")
+                print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}")
+                print()
 
-            options = []
-            for item in player.inventory:
-                sp  = _sell_price(item, city, disc)
-                mod = city.price_modifier(item.name)
-                if mod > 1.0:
-                    price_str = f"{C.BGREEN}{sp}gp ▲ (scarce){C.RESET}"
-                elif mod < 1.0:
-                    price_str = f"{C.BRED}{sp}gp ▼ (abundant){C.RESET}"
-                else:
-                    price_str = f"{C.WHITE}{sp}gp{C.RESET}"
-                options.append(
-                    f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}  "
-                    f"{price_str}  {C.DIM}base {item.base_value}gp{C.RESET}"
-                )
-            options.append(f"{C.BBLACK}← Back{C.RESET}")
+                options = []
+                for item in player.inventory:
+                    sp  = _sell_price(item, city, disc)
+                    mod = city.price_modifier(item.name)
+                    if mod > 1.0:
+                        price_str = f"{C.BGREEN}{sp}gp ▲ (scarce){C.RESET}"
+                    elif mod < 1.0:
+                        price_str = f"{C.BRED}{sp}gp ▼ (abundant){C.RESET}"
+                    else:
+                        price_str = f"{C.WHITE}{sp}gp{C.RESET}"
+                    options.append(
+                        f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}  "
+                        f"{price_str}  {C.DIM}base {item.base_value}gp{C.RESET}"
+                    )
+                options.append(f"{C.BBLACK}← Leave selling{C.RESET}")
 
-            choice = prompt_choice(options, "Sell which item?")
-            if choice == len(options):
-                continue
+                choice = prompt_choice(options, "Sell which item?")
+                if choice == len(options):
+                    break
 
-            item = player.inventory[choice - 1]
-            sp   = _sell_price(item, city, disc)
-            player.remove_item(item)
-            player.gold += sp
-            merchant["sold_items"].append(item)   # player can buy it back
-            print(f"\n  {C.BGREEN}Sold {item.name} for {sp}gp.  Gold: {player.gold}gp{C.RESET}")
-            time.sleep(0.9)
+                item = player.inventory[choice - 1]
+                sp   = _sell_price(item, city, disc)
+                player.remove_item(item)
+                player.gold += sp
+                merchant["sold_items"].append(item)
+                print(f"\n  {C.BGREEN}Sold {item.name} for {sp}gp.  Gold: {player.gold}gp{C.RESET}")
+                pause("Press Enter to sell another or leave...")
 
         # ════ BUY TAB ════════════════════════════════════════════════════
+        # PT10 fix: inner while loop keeps player in buy screen until they
+        # explicitly choose to leave, instead of returning to merchant menu.
         elif tab == 2:
-            all_buyable = merchant["stock"] + merchant["sold_items"]
-            if not all_buyable:
-                print(f"\n  {C.BBLACK}Nothing left in stock.{C.RESET}")
-                pause("Press Enter to go back...")
-                continue
+            while True:
+                disc = merchant.get("discount", 1.0)
+                all_buyable = merchant["stock"] + merchant["sold_items"]
+                if not all_buyable:
+                    print(f"\n  {C.BBLACK}Nothing left in stock.{C.RESET}")
+                    pause("Press Enter to go back...")
+                    break
 
-            clear()
-            title_screen(f"BUY — {merchant['name'].upper()}")
-            print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}  "
-                  f"{C.DIM}Bag: {len(player.inventory)}/{MAX_INVENTORY}{C.RESET}")
-            print()
+                clear()
+                title_screen(f"BUY — {merchant['name'].upper()}")
+                print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}  "
+                      f"{C.DIM}Bag: {len(player.inventory)}/{MAX_INVENTORY}{C.RESET}")
+                print()
 
-            options = []
-            for item in all_buyable:
-                bp  = _buy_price(item, city, disc)
-                mod = city.price_modifier(item.name)
-                # Mark items sold back by the player
-                is_sellback = item in merchant["sold_items"]
-                tag = f"  {C.BYELLOW}[yours]{C.RESET}" if is_sellback else ""
-                if mod < 1.0:
-                    price_str = f"{C.BGREEN}{bp}gp ▼{C.RESET}"
-                elif mod > 1.0:
-                    price_str = f"{C.BRED}{bp}gp ▲{C.RESET}"
+                options = []
+                for item in all_buyable:
+                    bp  = _buy_price(item, city, disc)
+                    mod = city.price_modifier(item.name)
+                    is_sellback = item in merchant["sold_items"]
+                    tag = f"  {C.BYELLOW}[yours]{C.RESET}" if is_sellback else ""
+                    if mod < 1.0:
+                        price_str = f"{C.BGREEN}{bp}gp ▼{C.RESET}"
+                    elif mod > 1.0:
+                        price_str = f"{C.BRED}{bp}gp ▲{C.RESET}"
+                    else:
+                        price_str = f"{C.WHITE}{bp}gp{C.RESET}"
+                    affordable = "" if player.gold >= bp else f"  {C.BRED}✗{C.RESET}"
+                    desc_text = item.description[:65] + ("…" if len(item.description) > 65 else "")
+                    options.append(
+                        f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}"
+                        f"{tag}  {price_str}{affordable}  "
+                        f"{C.DIM}{desc_text}{C.RESET}"
+                    )
+                options.append(f"{C.BBLACK}← Leave buying{C.RESET}")
+
+                choice = prompt_choice(options, "Buy which item?")
+                if choice == len(options):
+                    break
+
+                item = all_buyable[choice - 1]
+                bp   = _buy_price(item, city, disc)
+
+                if player.gold < bp:
+                    print(f"\n  {C.RED}Not enough gold. Need {bp}gp, have {player.gold}gp.{C.RESET}")
+                    pause("Press Enter to continue...")
+                elif not player.can_carry():
+                    print(f"\n  {C.RED}Pack full ({MAX_INVENTORY}/{MAX_INVENTORY} items).{C.RESET}")
+                    pause("Press Enter to continue...")
                 else:
-                    price_str = f"{C.WHITE}{bp}gp{C.RESET}"
-                affordable = "" if player.gold >= bp else f"  {C.BRED}✗{C.RESET}"
-                options.append(
-                    f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}"
-                    f"{tag}  {price_str}{affordable}  "
-                    f"{C.DIM}{item.description[:40]}{C.RESET}"
-                )
-            options.append(f"{C.BBLACK}← Back{C.RESET}")
-
-            choice = prompt_choice(options, "Buy which item?")
-            if choice == len(options):
-                continue
-
-            item = all_buyable[choice - 1]
-            bp   = _buy_price(item, city, disc)
-
-            if player.gold < bp:
-                print(f"\n  {C.RED}Not enough gold. Need {bp}gp, have {player.gold}gp.{C.RESET}")
-                time.sleep(1.0)
-            elif not player.can_carry():
-                print(f"\n  {C.RED}Pack full ({MAX_INVENTORY}/{MAX_INVENTORY} items).{C.RESET}")
-                time.sleep(1.0)
-            else:
-                player.gold -= bp
-                player.add_item(item)
-                # Remove from the correct list
-                if item in merchant["sold_items"]:
-                    merchant["sold_items"].remove(item)
-                else:
-                    merchant["stock"].remove(item)
-                print(f"\n  {C.BGREEN}Bought {item.name} for {bp}gp. Gold: {player.gold}gp{C.RESET}")
-                time.sleep(0.9)
+                    player.gold -= bp
+                    player.add_item(item)
+                    if item in merchant["sold_items"]:
+                        merchant["sold_items"].remove(item)
+                    else:
+                        merchant["stock"].remove(item)
+                    print(f"\n  {C.BGREEN}Bought {item.name} for {bp}gp. Gold: {player.gold}gp{C.RESET}")
+                    pause("Press Enter to buy another or leave...")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1130,42 +1712,65 @@ _city_merchants: dict = {}
 
 
 def visit_market(player: Player, city):
-    """Show the 3 merchants available this visit and let the player pick one."""
+    """
+    PT10 fix: merchant availability system.
+    Player is prompted 'Whom are you looking for?' and sees all merchant types
+    with their availability. Available merchants can be visited; unavailable ones
+    show 'Not in town today' and cannot be selected.
+    """
     global _city_merchants
     city_key = city.key
 
-    # Generate merchants once per city visit
+    # Generate merchants once per city visit (persist until player leaves)
     if city_key not in _city_merchants:
         _city_merchants[city_key] = generate_city_merchants(city_key)
 
     merchants = _city_merchants[city_key]
+    available = [m for m in merchants if m.get("available", True)]
 
     while True:
         clear()
         title_screen(f"THE MARKET — {city.name.upper()}")
-        print(f"  {C.DIM}Three merchants have set up stalls today.{C.RESET}")
+        print(f"  {C.DIM}Whom are you looking for?{C.RESET}")
         print(f"  {C.BYELLOW}Your gold: {player.gold}gp{C.RESET}")
         print()
 
-        options = []
+        options      = []
+        option_map   = []    # maps option index → merchant dict (None if unavailable)
+
         for m in merchants:
-            disc     = m.get("discount", 1.0)
-            neg_tag  = (
+            disc        = m.get("discount", 1.0)
+            is_avail    = m.get("available", True)
+            neg_tag     = (
                 f"  {C.BGREEN}[{round((1-disc)*100)}% off]{C.RESET}" if disc < 1.0 else
                 f"  {C.BRED}[+{round((disc-1)*100)}% up]{C.RESET}"   if disc > 1.0 else ""
             )
-            options.append(
-                f"{C.BCYAN}{m['name']:<12}{C.RESET}  "
-                f"{C.BOLD}{m['type']}{C.RESET}{neg_tag}  "
-                f"{C.DIM}{m['tagline']}{C.RESET}"
-            )
-        options.append(f"{C.BBLACK}← Leave the market{C.RESET}")
+            if is_avail:
+                options.append(
+                    f"{C.BCYAN}{m['type']:<22}{C.RESET}  "
+                    f"{C.DIM}{m['tagline']}{C.RESET}{neg_tag}"
+                )
+                option_map.append(m)
+            else:
+                options.append(
+                    f"{C.BBLACK}{m['type']:<22}  Not in town today.{C.RESET}"
+                )
+                option_map.append(None)
 
-        choice = prompt_choice(options, "Approach which merchant?")
+        options.append(f"{C.BBLACK}← Leave the market{C.RESET}")
+        option_map.append(None)
+
+        choice = prompt_choice(options, "Who would you like to see?")
         if choice == len(options):
             return
 
-        merchant_screen(player, city, merchants[choice - 1])
+        selected = option_map[choice - 1]
+        if selected is None:
+            print(f"\n  {C.BBLACK}They're not around today. Try again when you next visit.{C.RESET}")
+            pause("Press Enter to continue...")
+            continue
+
+        merchant_screen(player, city, selected)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1173,45 +1778,51 @@ def visit_market(player: Player, city):
 # ════════════════════════════════════════════════════════════════
 
 def train_skills(player: Player):
-    clear()
-    title_screen("TRAINING HALL")
-    print(f"  {C.DIM}A local master offers to sharpen your abilities.{C.RESET}")
-    print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}")
-    print()
+    # PT10 fix: wrap in while True so player can train multiple skills
+    # without being kicked back to the city menu after each session.
+    while True:
+        clear()
+        title_screen("TRAINING HALL")
+        print(f"  {C.DIM}A local master offers to sharpen your abilities.{C.RESET}")
+        print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}")
+        print()
 
-    section("CHOOSE A SKILL TO TRAIN")
-    options = []
-    for skill in SKILLS:
-        current = player.skill(skill)
-        cost    = _training_cost(current)
-        bar     = skill_bar(current)
+        section("CHOOSE A SKILL TO TRAIN")
+        options = []
+        for skill in SKILLS:
+            current = player.skill(skill)
+            cost    = _training_cost(current)
+            bar     = skill_bar(current)
+            if current >= 100:
+                options.append(f"{C.BCYAN}{skill:<16}{C.RESET}  {bar}  {current}/100  {C.DIM}MAXED{C.RESET}")
+            else:
+                color = C.BGREEN if player.gold >= cost else C.BRED
+                options.append(
+                    f"{C.BCYAN}{skill:<16}{C.RESET}  {bar}  {current}/100  "
+                    f"→ {color}{cost}gp{C.RESET}"
+                )
+        options.append(f"{C.BBLACK}← Leave{C.RESET}")
+
+        choice = prompt_choice(options, "Train which skill?")
+        if choice == len(options):
+            return
+
+        skill_name = SKILLS[choice - 1]
+        current    = player.skill(skill_name)
+        cost       = _training_cost(current)
+
         if current >= 100:
-            options.append(f"{C.BCYAN}{skill:<16}{C.RESET}  {bar}  {current}/100  {C.DIM}MAXED{C.RESET}")
+            print(f"\n  {C.RED}That skill is already at its peak.{C.RESET}")
+            pause("Press Enter to continue...")
+        elif player.gold < cost:
+            print(f"\n  {C.RED}Not enough gold. Need {cost}gp, have {player.gold}gp.{C.RESET}")
+            pause("Press Enter to continue...")
         else:
-            color = C.BGREEN if player.gold >= cost else C.BRED
-            options.append(
-                f"{C.BCYAN}{skill:<16}{C.RESET}  {bar}  {current}/100  "
-                f"→ {color}{cost}gp{C.RESET}"
-            )
-    options.append(f"{C.BBLACK}← Leave{C.RESET}")
-
-    choice = prompt_choice(options, "Train which skill?")
-    if choice == len(options):
-        return
-
-    skill_name = SKILLS[choice - 1]
-    current    = player.skill(skill_name)
-    cost       = _training_cost(current)
-
-    if current >= 100:
-        print(f"\n  {C.RED}That skill is already at its peak.{C.RESET}")
-    elif player.gold < cost:
-        print(f"\n  {C.RED}Not enough gold. Need {cost}gp, have {player.gold}gp.{C.RESET}")
-    else:
-        player.gold -= cost
-        player.train(skill_name)
-        print(f"\n  {C.BGREEN}✓ {skill_name} improved to {current + 1}!{C.RESET}")
-    time.sleep(1.2)
+            player.gold -= cost
+            player.train(skill_name)
+            print(f"\n  {C.BGREEN}✓ {skill_name} improved to {current + 1}!{C.RESET}")
+            print(f"  {C.DIM}Gold remaining: {player.gold}gp{C.RESET}")
+            pause("Press Enter to train again or leave...")
 
 
 
@@ -1262,34 +1873,55 @@ def rest_at_inn(player: Player):
 # ════════════════════════════════════════════════════════════════
 
 def read_book_menu(player: Player):
-    """Let the player read a lore book from inventory, adding it to the journal."""
-    books = [i for i in player.inventory if i.item_type == "book" and i.lore]
-    if not books:
+    """Let the player read a lore book or grimtotem from inventory."""
+    books      = [i for i in player.inventory if i.item_type == "book" and i.lore]
+    grimtotems = [i for i in player.inventory if i.item_type == "grimtotem"]
+    if not books and not grimtotems:
         clear()
-        print(f"\n  {C.BBLACK}You have no books to read.{C.RESET}")
+        print(f"\n  {C.BBLACK}You have nothing to read.{C.RESET}")
         pause()
         return
 
     while True:
         clear()
-        title_screen("READ A BOOK")
-        print(f"  {C.DIM}Reading a book adds its lore to your journal.{C.RESET}")
+        title_screen("READ")
+        print(f"  {C.DIM}Books add lore to your journal. Grimtotems teach spells.{C.RESET}")
         print()
 
         options = []
+        # Books first
         for b in books:
             already = b.lore in player.journal
             tag = f"  {C.BBLACK}[already read]{C.RESET}" if already else ""
             options.append(
                 f"{RARITY_COLOR.get(b.rarity, C.WHITE)}{b.name}{C.RESET}"
-                f"  {C.DIM}{b.description}{C.RESET}{tag}"
+                f"  {C.DIM}[book]{C.RESET}{tag}"
+            )
+        n_books = len(books)
+        # Grimtotems second
+        for gt in grimtotems:
+            known = gt.spell_name in player.learned_spells if gt.spell_name else False
+            tag   = f"  {C.BBLACK}[already known]{C.RESET}" if known else ""
+            options.append(
+                f"{RARITY_COLOR.get(gt.rarity, C.WHITE)}{gt.name}{C.RESET}"
+                f"  {C.DIM}[grimtotem — {gt.spell_name}]{C.RESET}{tag}"
             )
         options.append(f"{C.BBLACK}← Back{C.RESET}")
 
-        choice = prompt_choice(options, "Read which book?")
+        choice = prompt_choice(options, "Read which?")
         if choice == len(options):
             return
 
+        # ── Grimtotem branch ──────────────────────────────────────────────
+        if choice > n_books:
+            gt      = grimtotems[choice - n_books - 1]
+            learned = read_grimtotem(player, gt)
+            if learned:
+                player.remove_item(gt)
+                grimtotems = [i for i in player.inventory if i.item_type == "grimtotem"]
+            continue
+
+        # ── Book branch ───────────────────────────────────────────────────
         book = books[choice - 1]
         clear()
         title_screen(book.name.upper())
@@ -1297,7 +1929,6 @@ def read_book_menu(player: Player):
         print()
         hr()
         print()
-        # Typewrite the lore text
         words = book.lore.split()
         line  = ""
         for word in words:
@@ -1326,23 +1957,124 @@ def read_book_menu(player: Player):
 #   BAG
 # ════════════════════════════════════════════════════════════════
 
+SKILL_GUIDE = {
+    "Merchantilism": (
+        "Governs your ability to turn a profit at every stall and counter. "
+        "A higher score earns better sell prices and unlocks sharper buy discounts through negotiation. "
+        "City merchants respect a face that knows the value of things."
+    ),
+    "Speechcraft": (
+        "Your tongue is a tool as much as any blade. Speechcraft opens dialogue options with strangers, "
+        "smooths over hostile encounters, and improves how NPCs read your intent. "
+        "A skilled speaker can talk their way out of situations a fighter cannot."
+    ),
+    "Martial": (
+        "Raw combat ability — how hard you hit, how reliably you connect, and how well you absorb punishment. "
+        "Martial governs your attack roll, your base defense, and the power of physical weapon moves. "
+        "Every fighter on the road has some. Not all have enough."
+    ),
+    "Magic": (
+        "Determines your mana pool and whether you can cast the spells you've learned. "
+        "High Magic does not grant new spells on its own — spells must be purchased via Grimtotems. "
+        "What Magic does is make those spells hit harder and sustain longer. "
+        "Unarmoured mages receive a passive bonus."
+    ),
+    "Stealth": (
+        "Governs your ability to move unseen and strike first. "
+        "Used when attempting to enter caves and castles undetected — at low skill, success is rare. "
+        "Also boosts the power of the Snipe bow move, and improves your chance of escaping from combat. "
+        "Low stealth means enemies hear you coming."
+    ),
+    "Survival": (
+        "The road is long and unkind. Survival reduces the chance of wilderness events catching you off guard, "
+        "improves your foraging results and success rate, boosts your initiative roll, "
+        "and synergises with Pot Shot for bowmen. High Survival means the wilds feel less hostile."
+    ),
+    "Dungeoneering": (
+        "Experience with caves, ruins, and the things that live in them. "
+        "Scouting a location before you enter draws on Dungeoneering — high skill gives you an accurate "
+        "enemy count; low skill leaves you guessing. Also governs trap awareness and unlocks certain "
+        "exploration choices inside locations."
+    ),
+}
+
+
+def show_skill_guide():
+    """Display a full conceptual reference for all 7 skills."""
+    clear()
+    title_screen("SKILL GUIDE")
+    print(f"  {C.DIM}A reference for what each skill governs. No numbers — just what it means to invest.{C.RESET}")
+    print()
+    hr()
+    for skill, desc in SKILL_GUIDE.items():
+        print(f"  {C.BCYAN}{C.BOLD}{skill}{C.RESET}")
+        # Word-wrap the description at ~72 chars
+        words  = desc.split()
+        line   = "  "
+        for word in words:
+            if len(line) + len(word) + 1 > 74:
+                print(f"{C.DIM}{line}{C.RESET}")
+                line = "  " + word + " "
+            else:
+                line += word + " "
+        if line.strip():
+            print(f"{C.DIM}{line}{C.RESET}")
+        print()
+    hr()
+    pause()
+
+
+def show_inventory_screen(player: Player):
+    """Show full inventory with lore fragments."""
+    clear()
+    section("INVENTORY")
+    print()
+    if not player.inventory:
+        print(f"  {C.BBLACK}(empty){C.RESET}")
+    else:
+        for i, item in enumerate(player.inventory, 1):
+            print(f"  {C.DIM}{i:2}.{C.RESET}  {item_line(item)}")
+            if item.lore:
+                print(f"       {C.BBLACK}\"{item.lore}\"{C.RESET}")
+    print()
+    print(f"  {C.DIM}Carrying {len(player.inventory)}/{MAX_INVENTORY} items{C.RESET}")
+    print()
+    pause()
+
+
 def bag_screen(player: Player):
-    """Single access point for Gear and Journal — usable on road and in city."""
+    """Single access point for Gear, Inventory, Journal, Skill Guide, and item use."""
     while True:
         journal_ct = len(player.journal)
         j_hint = f"{C.DIM}({journal_ct} entr{'y' if journal_ct == 1 else 'ies'}){C.RESET}"
+        inv_hint = f"{C.DIM}({len(player.inventory)}/{MAX_INVENTORY} items){C.RESET}"
+        # Count usable consumables for hint
+        usable_ct = sum(
+            1 for i in player.inventory
+            if i.item_type in ("potion", "consumable") and i.effect
+        )
+        use_hint = f"  {C.BYELLOW}({usable_ct} usable){C.RESET}" if usable_ct else ""
         clear()
         section("BAG")
         print()
         choice = prompt_choice([
-            f"Gear     {C.DIM}(equipped items, grimtotems){C.RESET}",
-            f"Journal  {j_hint}",
+            f"Gear        {C.DIM}(equipped items, grimtotems){C.RESET}",
+            f"Inventory   {inv_hint}",
+            f"Use Item    {C.DIM}(potions, bandages, rations){C.RESET}{use_hint}",
+            f"Journal     {j_hint}",
+            f"Skill Guide {C.DIM}(what each skill governs){C.RESET}",
             f"{C.BBLACK}Back{C.RESET}",
         ])
         if choice == 1:
             equip_screen(player)
         elif choice == 2:
+            show_inventory_screen(player)
+        elif choice == 3:
+            use_items_screen(player)
+        elif choice == 4:
             show_journal(player)
+        elif choice == 5:
+            show_skill_guide()
         else:
             return
 
@@ -1367,10 +2099,11 @@ def city_loop(player: Player):
             f"{C.DIM}({journal_ct} entr{'y' if journal_ct == 1 else 'ies'}){C.RESET}"
         )
 
-        # Count unread books in inventory
-        books_in_bag = [i for i in player.inventory if i.item_type == "book" and i.lore]
+        # Count readable items (books + grimtotems) in inventory
+        readable_items = [i for i in player.inventory if i.item_type in ("book", "grimtotem")]
         book_hint = (
-            f"  {C.BYELLOW}({len(books_in_bag)} unread){C.RESET}" if books_in_bag else ""
+            f"  {C.BYELLOW}({len(readable_items)} item{'s' if len(readable_items) != 1 else ''}){C.RESET}"
+            if readable_items else ""
         )
 
         options = [
@@ -1379,19 +2112,12 @@ def city_loop(player: Player):
             f"Training Hall     {C.DIM}(improve skills for gold){C.RESET}",
             f"Rest at the Inn   {C.DIM}(restore HP & mana — 10gp){C.RESET}",
             f"Character Sheet   {C.DIM}(stats, equipment, inventory){C.RESET}",
-            f"Read a Book       {C.DIM}(add lore to your journal){C.RESET}{book_hint}",
+            f"Read              {C.DIM}(books + grimtotems){C.RESET}{book_hint}",
+            f"Travel            {C.DIM}(set out on the road){C.RESET}",
+            f"{C.BBLACK}Quit{C.RESET}",
         ]
-        for dest_key in adjacent:
-            dest       = CITIES[dest_key]
-            road_color = BIOME_COLOR.get(dest.road_biome_east or dest.biome, C.WHITE)
-            options.append(
-                f"Travel to {C.BOLD}{dest.name}{C.RESET}  "
-                f"{road_color}[{dest.biome} region]{C.RESET}"
-            )
-        options.append(f"{C.BBLACK}Quit{C.RESET}")
 
         choice = prompt_choice(options, "Your choice")
-        n_base = 6   # 6 base options (market/bag/train/rest/char/books)
 
         if choice == 1:
             visit_market(player, city)
@@ -1405,9 +2131,28 @@ def city_loop(player: Player):
             show_character_sheet(player)
         elif choice == 6:
             read_book_menu(player)
-        elif choice <= n_base + len(adjacent):
-            dest_key = adjacent[choice - n_base - 1]
-            # Clear merchants for this city — they'll refresh next visit
+        elif choice == 7:
+            # ── Travel sub-menu ───────────────────────────────────────────
+            if not adjacent:
+                print(f"\n  {C.BBLACK}No roads lead out of {city.name}.{C.RESET}")
+                pause()
+                continue
+            clear()
+            show_world_map(player)
+            section("WHERE WOULD YOU LIKE TO GO?")
+            dest_options = []
+            for dest_key in adjacent:
+                dest       = CITIES[dest_key]
+                road_color = BIOME_COLOR.get(dest.road_biome_east or dest.biome, C.WHITE)
+                dest_options.append(
+                    f"{C.BOLD}{dest.name}{C.RESET}  "
+                    f"{road_color}[{dest.biome} road]{C.RESET}"
+                )
+            dest_options.append(f"{C.BBLACK}← Back{C.RESET}")
+            dest_choice = prompt_choice(dest_options, "Your destination")
+            if dest_choice == len(dest_options):
+                continue
+            dest_key = adjacent[dest_choice - 1]
             _city_merchants.pop(player.current_city, None)
             start_travel(player, dest_key)
             return   # hand off to road loop
@@ -1472,12 +2217,22 @@ def explore_event(player: Player, event):
 
         if "Scout the area" in chosen:
             scouted = True
-            roll = random.randint(1, 20) + player.skill("Dungeoneering") // 5
-            if roll >= 10:
-                total_known = len(enemies)
+            roll    = random.randint(1, 20) + player.skill("Dungeoneering") // 4
+            actual  = len(enemies)
+            if roll >= 18:
+                # Full success — exact count
+                total_known = actual
                 label = "enemy" if total_known == 1 else "enemies"
                 print(f"\n  {C.BGREEN}You study the entrance carefully. {total_known} {label} inside.{C.RESET}")
+            elif roll >= 12:
+                # Partial — off by ±1, minimum 1
+                offset      = random.choice([-1, 0, 1])
+                approx      = max(1, actual + offset)
+                total_known = 0   # don't reveal true count
+                label       = "enemy" if approx == 1 else "enemies"
+                print(f"\n  {C.BYELLOW}You make out movement inside — roughly {approx} {label}, maybe more.{C.RESET}")
             else:
+                # Fail
                 print(f"\n  {C.DIM}You couldn't make out much from the entrance.{C.RESET}")
             pause("Press Enter to continue...")
             clear()
@@ -1491,8 +2246,9 @@ def explore_event(player: Player, event):
 
         elif "Attempt stealth" in chosen:
             stealth_used = True
-            roll = random.randint(1, 20) + player.skill("Stealth") // 5
-            if roll >= 12:
+            stealth_val     = player.skill("Stealth")
+            success_chance  = max(0.05, min(0.95, 0.15 + (stealth_val - 5) * 0.013))
+            if random.random() < success_chance:
                 force_first = True
                 print(f"\n  {C.BGREEN}You slip inside undetected. The first enemy has no idea you're here.{C.RESET}")
             else:
@@ -1662,6 +2418,11 @@ def make_camp(player: Player):
         pause()
         return
 
+    if player.hp >= player.max_hp:
+        print(f"\n  {C.BGREEN}You are in full health.{C.RESET}{C.DIM} Save your supplies for when you need them.{C.RESET}")
+        pause()
+        return
+
     hp_gain, mana_gain, poison_risk = CAMP_FOOD[food.name]
 
     print(f"\n  {C.DIM}You find a sheltered spot and build a fire.{C.RESET}")
@@ -1685,9 +2446,12 @@ def make_camp(player: Player):
         print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}  |  Mana: {player.mana}/{player.max_mana}{C.RESET}")
         # Herb Bundle cures road ailments
         if food.name == "Herb Bundle":
-            if player.road_poison > 0 or player.road_diseased:
+            if player.road_poison > 0 or player.road_diseased or player.sick_days > 0:
                 player.road_poison   = 0
                 player.road_diseased = False
+                player.sick_skill    = None
+                player.sick_days     = 0
+                player.sick_penalty  = 0
                 print(f"  {C.BGREEN}The herbs clear whatever ailed you. Poison and sickness fade.{C.RESET}")
 
     pause()
@@ -1736,6 +2500,42 @@ def _do_forage(player: Player):
     print(f"  {C.DIM}You move quietly through the undergrowth...{C.RESET}")
     time.sleep(1.0)
     print()
+
+    # ── Encounter check — foraging is movement, movement has risk ────────────
+    encounter_roll = random.random()
+    biome          = getattr(player, "road_biome", "forest")
+    if encounter_roll < 0.14:
+        # Enemy encounter
+        from data.enemies import get_enemy_for_biome
+        enc_enemy = get_enemy_for_biome(biome)
+        print(f"  {C.BRED}A {enc_enemy.name} finds you before you find anything useful.{C.RESET}")
+        print(f"  {C.DIM}{enc_enemy.description}{C.RESET}")
+        time.sleep(1.2)
+        won = run_combat(player, enc_enemy)
+        if not player.is_alive():
+            return   # caller (road_loop) handles game_over
+        if won:
+            loot_screen(player, enc_enemy)
+        clear()
+        title_screen("FORAGING")
+        print(f"  {C.DIM}The encounter behind you, you search the area once more...{C.RESET}")
+        time.sleep(0.8)
+        print()
+    elif encounter_roll < 0.20:
+        # Location spotted
+        from engine.events import random_cave, random_castle
+        event = random.choice([random_cave(), random_castle()])
+        print(f"  {C.BYELLOW}While foraging, you stumble upon something...{C.RESET}")
+        print(f"  {C.DIM}{event.flavour}{C.RESET}")
+        time.sleep(1.2)
+        explore_event(player, event)
+        if not player.is_alive():
+            return
+        clear()
+        title_screen("FORAGING")
+        print(f"  {C.DIM}You return to your search...{C.RESET}")
+        time.sleep(0.8)
+        print()
 
     if random.random() * 100 > success_chance:
         player.days_elapsed += 1
@@ -2001,9 +2801,13 @@ def bushcraft_screen(player):
           f"Forage success: ~{min(85, int(35 + survival * 0.5))}%{C.RESET}")
     print()
 
+    # PT10 fix: always show the hunt option so players discover it exists.
+    # If no bow is equipped/carried, the option appears but is disabled.
     options = ["Forage for resources"]
     if has_bow:
-        options.append("Hunt for game  (bow ready)")
+        options.append(f"Hunt for game  {C.DIM}(bow ready — Stealth + Survival){C.RESET}")
+    else:
+        options.append(f"{C.BBLACK}Hunt for game  (requires a bow — none in pack){C.RESET}")
     options.append(f"{C.BBLACK}\u2190 Back to road{C.RESET}")
 
     choice = prompt_choice(options, "What will you do?")
@@ -2012,8 +2816,12 @@ def bushcraft_screen(player):
         return
     if choice == 1:
         _do_forage(player)
-    elif has_bow and choice == 2:
-        hunting_minigame(player)
+    elif choice == 2:
+        if has_bow:
+            hunting_minigame(player)
+        else:
+            print(f"\n  {C.BBLACK}You need a bow to hunt. Pick one up from a Blacksmith or loot one on the road.{C.RESET}")
+            pause("Press Enter to continue...")
 
 
 
@@ -2201,12 +3009,26 @@ def _we_stranger(player: Player):
 # ════════════════════════════════════════════════════════════════
 
 def road_loop(player):
+    # PT10 fix: flavor text now displays BEFORE the road menu, gated by Enter.
+    # First iteration shows "You step foot on the road to X" then flavor.
+    # Subsequent iterations show a fresh flavor line before options.
+    _first_step = True
+
     while player.on_road:
         dest_name  = CITIES[player.road_destination].name
         road_biome = player.road_biome
 
         show_world_map(player)
-        print(f"  {C.DIM}You press on through the {road_biome} toward {dest_name}.{C.RESET}")
+
+        # ── Road flavor — displayed above menu, gated by Enter ────────────────
+        if _first_step:
+            print(f"  {C.BYELLOW}You step foot on the road to {dest_name}.{C.RESET}")
+            pause("  Press Enter to set out...")
+            _first_step = False
+
+        flavor = _road_flavor_line(road_biome, player.road_steps, player.road_total)
+        show_world_map(player)
+        print(f"  {C.DIM}{flavor}{C.RESET}")
         print()
         section("ROAD")
 
@@ -2222,11 +3044,12 @@ def road_loop(player):
                           f"(missing: {', '.join(missing)}){C.RESET}")
 
         options = [
-            f"Press on       {C.DIM}(continue towards {dest_name}){C.RESET}",
+            f"Press on         {C.DIM}(continue towards {dest_name}){C.RESET}",
             camp_label,
-            f"Bushcraft      {C.DIM}(forage or hunt — governed by Survival){C.RESET}",
-            f"Bag            {C.DIM}(gear + journal){C.RESET}",
-            f"Turn back      {C.DIM}(return to origin city){C.RESET}",
+            f"Bushcraft        {C.DIM}(forage or hunt — governed by Survival){C.RESET}",
+            f"Bag              {C.DIM}(gear + journal){C.RESET}",
+            f"Character Sheet  {C.DIM}(stats, equipment, inventory){C.RESET}",
+            f"Turn back        {C.DIM}(return to origin city){C.RESET}",
         ]
         choice = prompt_choice(options)
 
@@ -2246,6 +3069,10 @@ def road_loop(player):
             continue
 
         if choice == 5:
+            show_character_sheet(player)
+            continue
+
+        if choice == 6:
             abort_travel(player)
             player.road_poison   = 0
             player.road_diseased = False
@@ -2275,9 +3102,24 @@ def road_loop(player):
                 game_over(player)
                 return
 
+        if player.sick_days > 0:
+            player.sick_days -= 1
+            if player.sick_days == 0:
+                print(f"  {C.BGREEN}The berry sickness fades. Your {player.sick_skill} feels normal again.{C.RESET}")
+                player.sick_skill   = None
+                player.sick_penalty = 0
+                time.sleep(0.6)
+            else:
+                _sd = "day" if player.sick_days == 1 else "days"
+                print(f"  {C.BYELLOW}You still feel unwell. ({player.sick_skill} dulled — {player.sick_days} {_sd} remaining){C.RESET}")
+                time.sleep(0.5)
+
         if arrived:
             player.road_poison   = 0
             player.road_diseased = False
+            player.sick_skill    = None
+            player.sick_days     = 0
+            player.sick_penalty  = 0
             city = CITIES[player.current_city]
             play_melody("city_arrive")
             start_ambient_loop("city")   # switch to city music on arrival
@@ -2289,9 +3131,10 @@ def road_loop(player):
         if enemy:
             clear()
             print()
-            print(f"  {C.BRED}{C.BOLD}A {enemy.name} blocks your path!{C.RESET}")
-            print(f"  {C.DIM}{enemy.description}{C.RESET}")
-            time.sleep(1.2)
+            typewrite(f"A {enemy.name} blocks your path!")
+            print(f"\n  {C.DIM}{enemy.description}{C.RESET}")
+            print()
+            pause("  Press Enter to engage...")
             won = run_combat(player, enemy)
             if not player.is_alive():
                 game_over(player)
@@ -2334,16 +3177,12 @@ def game_over(player):
 #   ENTRY POINT
 # ════════════════════════════════════════════════════════════════
 
-# ════════════════════════════════════════════════════════════════
-#   ENTRY POINT
-# ════════════════════════════════════════════════════════════════
-
 def main():
     clear()
-    title_screen("THE MERCHANT\'S ROAD")
+    title_screen("THE MERCHANT'S ROAD")
     print(f"  {C.DIM}Three cities. Open roads. One market worth mastering.{C.RESET}")
     print()
-    print(f"  {C.BBLACK}Alpha - World v2.0  |  Quality of Life Pass{C.RESET}")
+    print(f"  {C.BBLACK}Alpha - World v2.6  |  Play Test 10 Pass{C.RESET}")
     print()
     pause("Press Enter to begin...")
 
@@ -2353,7 +3192,7 @@ def main():
     while True:
         city_loop(player)
         if player.on_road:
-            start_ambient_loop("road")   # switching to road — change music
+            start_ambient_loop("road")
             road_loop(player)
 
 

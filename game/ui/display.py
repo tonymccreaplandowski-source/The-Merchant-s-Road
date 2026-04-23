@@ -77,57 +77,69 @@ def hr(char: str = "═", width: int = 62):
 _MELODIES = {
     # ── Road ambient — A minor, slow and haunting ─────────────────────────────
     "ambient": [
-        (110, 300), (0, 250),   # A2 — low root drone
-        (165, 250), (0, 200),   # E3 — fifth, hollow
-        (131, 200), (0, 300),   # C3 — minor third
-        (147, 250), (0, 200),   # D3
-        (220, 300), (0, 500),   # A3 — octave climb
-        (196, 200), (0, 200),   # G3
-        (175, 200), (0, 300),   # F3 — melancholy
-        (165, 300), (0, 600),   # E3 — resolve
-        (147, 200), (0, 200),   # D3 — descend
-        (131, 250), (0, 300),   # C3
-        (110, 400), (0, 2500),  # A2 — return to root, long silence
+        (110, 150), (0, 250),   # A2 — low root drone
+        (165, 125), (0, 200),   # E3 — fifth, hollow
+        (131, 100), (0, 300),   # C3 — minor third
+        (147, 125), (0, 200),   # D3
+        (220, 150), (0, 500),   # A3 — octave climb
+        (196, 100), (0, 200),   # G3
+        (175, 100), (0, 300),   # F3 — melancholy
+        (165, 150), (0, 600),   # E3 — resolve
+        (147, 100), (0, 200),   # D3 — descend
+        (131, 125), (0, 300),   # C3
+        (110, 200), (0, 2500),  # A2 — return to root, long silence
     ],
     # ── City ambient — C major, warm and wandering ────────────────────────────
     "ambient_city": [
-        (523, 200), (0, 150),   # C4 — bright root
-        (659, 200), (0, 150),   # E4 — major third
-        (784, 180), (0, 200),   # G4 — fifth
-        (659, 150), (0, 150),   # E4 — step back
-        (587, 200), (0, 200),   # D4
-        (523, 250), (0, 300),   # C4 — settle
-        (440, 150), (0, 150),   # A3 — descend
-        (494, 200), (0, 150),   # B3
-        (523, 200), (0, 200),   # C4
-        (392, 200), (0, 200),   # G3 — drop
-        (440, 200), (0, 200),   # A3
-        (523, 300), (0, 2000),  # C4 — resolve, pause
+        (523, 100), (0, 150),   # C4 — bright root
+        (659, 100), (0, 150),   # E4 — major third
+        (784, 90),  (0, 200),   # G4 — fifth
+        (659, 75),  (0, 150),   # E4 — step back
+        (587, 100), (0, 200),   # D4
+        (523, 125), (0, 300),   # C4 — settle
+        (440, 75),  (0, 150),   # A3 — descend
+        (494, 100), (0, 150),   # B3
+        (523, 100), (0, 200),   # C4
+        (392, 100), (0, 200),   # G3 — drop
+        (440, 100), (0, 200),   # A3
+        (523, 150), (0, 400),   # C4 — brief pause before second phrase
+        (587, 100), (0, 150),   # D4 — step up, new phrase
+        (659, 100), (0, 150),   # E4
+        (784, 75),  (0, 200),   # G4 — lift
+        (880, 100), (0, 150),   # A4 — peak
+        (784, 75),  (0, 150),   # G4 — fall back
+        (659, 100), (0, 200),   # E4
+        (587, 100), (0, 150),   # D4 — descend
+        (523, 75),  (0, 150),   # C4
+        (494, 100), (0, 200),   # B3 — dip below
+        (440, 100), (0, 150),   # A3
+        (494, 100), (0, 150),   # B3 — climb back
+        (523, 175), (0, 2000),  # C4 — final resolve, long pause
     ],
     # ── Dungeon ambient — E minor, oppressive and sparse ─────────────────────
     "ambient_dungeon": [
-        (82,  500), (0, 500),   # E2 — deep drone
-        (98,  300), (0, 400),   # G2 — minor third up
-        (87,  250), (0, 500),   # F2 — dissonant half-step
-        (82,  600), (0, 700),   # E2 — fall back
-        (110, 300), (0, 300),   # A2 — step up
-        (98,  200), (0, 300),   # G2
-        (87,  250), (0, 400),   # F2 — unresolved
-        (82,  700), (0, 3000),  # E2 — long, airless silence
+        (82,  250), (0, 500),   # E2 — deep drone
+        (98,  150), (0, 400),   # G2 — minor third up
+        (87,  125), (0, 500),   # F2 — dissonant half-step
+        (82,  300), (0, 700),   # E2 — fall back
+        (110, 150), (0, 300),   # A2 — step up
+        (98,  100), (0, 300),   # G2
+        (87,  125), (0, 400),   # F2 — unresolved
+        (82,  350), (0, 3000),  # E2 — long, airless silence
     ],
     # ── Tension ambient — A minor, quick and unsettling ──────────────────────
     "ambient_tension": [
-        (220, 100), (0, 80),    # A3 — quick pulse
-        (196, 100), (0, 80),    # G3
-        (175, 150), (0, 100),   # F3 — minor pull
-        (165, 200), (0, 150),   # E3
-        (220, 100), (0, 60),    # A3 — repeat, faster
-        (233, 100), (0, 80),    # Bb3 — raised tension
-        (220, 150), (0, 120),   # A3
-        (175, 100), (0, 100),   # F3
-        (165, 200), (0, 150),   # E3
-        (147, 150), (0, 150),   # D3 — descend
-        (165, 300), (0, 800),   # E3 — hold
+        (220, 50),  (0, 80),    # A3 — quick pulse
+        (196, 50),  (0, 80),    # G3
+        (175, 75),  (0, 100),   # F3 — minor pull
+        (165, 100), (0, 150),   # E3
+        (220, 50),  (0, 60),    # A3 — repeat, faster
+        (233, 50),  (0, 80),    # Bb3 — raised tension
+        (220, 75),  (0, 120),   # A3
+        (175, 50),  (0, 100),   # F3
+        (165, 100), (0, 150),   # E3
+        (147, 75),  (0, 150),   # D3 — descend
+        (165, 150), (0, 800),   # E3 — hold
         (0, 600),               # silence
     ],
     "city_arrive": [
@@ -251,6 +263,36 @@ def resume_ambient_loop() -> None:
 def stop_ambient_loop() -> None:
     """Stop the ambient loop as soon as the current note finishes."""
     _ambient_stop_event.set()
+
+
+# ── Battle music (WAV file) ──────────────────────────────────────────────────
+
+import os as _os
+_SOUNDS_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "sounds")
+
+
+def play_battle_music(filename: str = "battle_theme_1.wav") -> None:
+    """
+    Start looping battle music from the sounds/ folder.
+    Uses winsound.PlaySound with SND_ASYNC | SND_LOOP.
+    Silently does nothing on non-Windows or if the file is missing.
+    """
+    try:
+        import winsound
+        path = _os.path.join(_SOUNDS_DIR, filename)
+        if _os.path.isfile(path):
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+    except Exception:
+        pass
+
+
+def stop_battle_music() -> None:
+    """Stop any currently playing battle music."""
+    try:
+        import winsound
+        winsound.PlaySound(None, winsound.SND_PURGE)
+    except Exception:
+        pass
 
 
 def beep(tone: str = "attack"):
@@ -455,8 +497,22 @@ def show_world_map(player):
 
 
 
+def reset_combat_message() -> None:
+    """Call at the start of each new combat to ensure the first message animates."""
+    global _last_combat_message
+    _last_combat_message = ""
+
+
+# ── Combat message dedup tracker ─────────────────────────────────────────────
+# PT10 fix: only typewrite a message the first time it's displayed.
+# Subsequent calls with the same message (e.g. when opening attack sub-menus)
+# print instantly instead of re-animating.
+_last_combat_message: str = ""
+
+
 def show_combat_screen(player, enemy, message: str = ""):
     """Render the combat encounter screen."""
+    global _last_combat_message
     clear()
     print()
     box(
@@ -492,8 +548,14 @@ def show_combat_screen(player, enemy, message: str = ""):
     if message:
         print()
         hr("─")
+        is_new_message = (message != _last_combat_message)
+        _last_combat_message = message
         for line in message.split("\n"):
-            print(f"  {C.BYELLOW}\u00bb {line.strip()}{C.RESET}")
+            if line.strip():
+                if is_new_message:
+                    typewrite(f"\u00bb {line.strip()}", delay=0.022)
+                else:
+                    print(f"  \u00bb {line.strip()}")
     print()
 
 
@@ -514,8 +576,16 @@ def show_character_sheet(player):
     print()
     hr()
 
-    # Vitals
-    print(f"  {C.BGREEN}HP{C.RESET}    {player.hp}/{player.max_hp}   {hp_bar(player.hp, player.max_hp)}")
+    # Vitals — PT10 fix: flag cursed max-HP penalty if active
+    _cursed_ring = player.equipped.get("ring")
+    _cursed_neck = player.equipped.get("necklace")
+    _curse_hp_penalty = any(
+        getattr(i, "cursed", False) and getattr(i, "curse_effect", "") == "reduce_max_hp"
+        for i in [_cursed_ring, _cursed_neck]
+        if i is not None
+    )
+    _curse_hp_tag = f"  {C.BRED}[CURSED −20 max HP]{C.RESET}" if _curse_hp_penalty else ""
+    print(f"  {C.BGREEN}HP{C.RESET}    {player.hp}/{player.max_hp}   {hp_bar(player.hp, player.max_hp)}{_curse_hp_tag}")
     if player.max_mana > 0:
         print(f"  {C.BBLUE}Mana{C.RESET}  {player.mana}/{player.max_mana}   {mana_bar(player.mana, player.max_mana)}")
     print(f"  {C.BYELLOW}Gold{C.RESET}  {player.gold}gp")
@@ -553,28 +623,17 @@ def show_character_sheet(player):
     # Learned spells
     if getattr(player, "learned_spells", None):
         section("SPELLS")
-        from data.spells import SPELL_REGISTRY
+        from data.spells import SPELLS
         for spell_name in player.learned_spells:
-            spell = SPELL_REGISTRY.get(spell_name)
+            spell = SPELLS.get(spell_name)
             if spell:
-                if spell.mana_cost > 0:
-                    cost_str = f"  {C.DIM}({spell.mana_cost} MP){C.RESET}"
+                if spell.get("cost", 0) > 0:
+                    cost_str = f"  {C.DIM}({spell['cost']} MP){C.RESET}"
                 else:
-                    cost_str = f"  {C.BRED}({spell.self_cost} HP){C.RESET}"
-                print(f"  {C.BPURPLE}{spell.name}{C.RESET}{cost_str}  {C.DIM}{spell.description}{C.RESET}")
+                    cost_str = f"  {C.BRED}({spell.get('self_cost', 0)} HP){C.RESET}"
+                print(f"  {C.BPURPLE}{spell_name}{C.RESET}{cost_str}  {C.DIM}{spell['description']}{C.RESET}")
         print()
         hr()
-
-    # Inventory
-    section("INVENTORY")
-    if not player.inventory:
-        print(f"  {C.BBLACK}(empty){C.RESET}")
-    else:
-        for i, item in enumerate(player.inventory, 1):
-            print(f"  {C.DIM}{i:2}.{C.RESET}  {item_line(item)}")
-    print()
-    print(f"  {C.DIM}Carrying {len(player.inventory)}/{MAX_INVENTORY} items{C.RESET}")
-    print()
 
     pause()
 

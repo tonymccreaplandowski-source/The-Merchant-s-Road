@@ -95,9 +95,11 @@ def calculate_damage(
 
     # ── D20 general hit roll ──────────────────────────────────────────────────
     # When defense is high relative to attacker, attacks can miss entirely.
-    # Roll d20 + attacker_combat // 5.  Must beat defender_defense // 4 + 2.
+    # Roll d20 + attacker_combat // 5.  Must beat defender_defense // 3 + 3.
+    # PT10 fix: tightened threshold (was //4+2) so high-defense targets are
+    # meaningfully harder to hit rather than being near-auto-hits at low attack.
     hit_roll    = random.randint(1, 20) + attacker_combat // 5
-    hit_needed  = defender_defense // 4 + 2
+    hit_needed  = defender_defense // 3 + 3
     if hit_roll < hit_needed:
         return 0, "missed", False, "miss"
 
@@ -221,7 +223,7 @@ def cast_enemy_spell(spell_name: str, enemy: Enemy, player: Player) -> Tuple[int
         return random.randint(5, 12), "shadow surge"
 
     armor      = player.equipped.get("armor")
-    armor_type = armor.armor_type if armor else "none"
+    armor_type = getattr(armor, "armor_type", None) or "none"
     eff        = spell["effectiveness"].get(armor_type, 1.0)
     skill_mod  = max(0.5, min(1.4, 1.0 + (enemy.combat_skill - player.defense) / 200.0))
     raw        = spell["power"] * eff * skill_mod * random.uniform(0.80, 1.20)
@@ -276,19 +278,23 @@ def enemy_attack(enemy: Enemy, player: Player, state: Dict) -> Tuple[int, str, b
         if random.random() < 0.50:
             return 0, f"{move_name} (evaded)", False
 
+    # PT10 fix: enemy damage now scales with combat_skill relative to player
+    # defense, mirroring the player-attack skill_mod so numbers feel consistent.
+    skill_mod = max(0.5, min(1.5, 1.0 + (enemy.combat_skill - player.defense) / 200.0))
+
     if state.get("player_defensive"):
         state["player_defensive"] = False
         armor      = player.equipped.get("armor")
-        armor_type = armor.armor_type if armor else "none"
+        armor_type = getattr(armor, "armor_type", None) or "none"
         reduction  = {"none": 0.0, "cloth": 0.10, "leather": 0.20, "mail": 0.35}.get(armor_type, 0.0)
-        base       = move.get("power", enemy.base_damage) * random.uniform(0.8, 1.2)
+        base       = move.get("power", max(5, enemy.combat_skill // 3)) * skill_mod * random.uniform(0.8, 1.2)
         dmg        = max(1, round(base * (1.0 - reduction) * 0.75))
         return dmg, move_name, False
 
     armor      = player.equipped.get("armor")
-    armor_type = armor.armor_type if armor else "none"
+    armor_type = getattr(armor, "armor_type", None) or "none"
     reduction  = {"none": 0.0, "cloth": 0.10, "leather": 0.20, "mail": 0.35}.get(armor_type, 0.0)
-    base       = move.get("power", enemy.base_damage) * random.uniform(0.8, 1.2)
+    base       = move.get("power", max(5, enemy.combat_skill // 3)) * skill_mod * random.uniform(0.8, 1.2)
     dmg        = max(1, round(base * (1.0 - reduction)))
     return dmg, move_name, False
 

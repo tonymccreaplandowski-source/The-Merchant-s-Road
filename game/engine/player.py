@@ -26,10 +26,12 @@ SKILL_DESCRIPTIONS = {
     "Dungeoneering":  "Improves cave/castle exploration and trap detection.",
 }
 
-STARTING_POINTS  = 180
-MIN_SKILL        = 5
-MAX_SKILL        = 100
-MAX_INVENTORY    = 12     # hard cap on carried items
+STARTING_POINTS      = 100   # total points; 60 consumed by class dominant skills, 40 free
+MIN_SKILL            = 5
+MAX_SKILL            = 100
+MAX_CREATION_SKILL   = 20   # per-skill cap for minor skills at character creation only
+DOMINANT_SKILL_VALUE = 30   # both dominant skills are set to this at class selection
+MAX_INVENTORY        = 12   # hard cap on carried items
 
 
 @dataclass
@@ -67,6 +69,11 @@ class Player:
     road_poison: int                = 0   # turns of poison remaining (5 HP per step)
     road_diseased: bool             = False  # disease active — 5 HP drain per step until town
 
+    # Berry sickness — temporary skill debuff from unknown berries
+    sick_skill: Optional[str]       = None   # which skill is debuffed
+    sick_days: int                  = 0      # road steps remaining
+    sick_penalty: int               = 0      # points deducted from sick_skill
+
     # Time
     days_elapsed: int               = 0
 
@@ -98,6 +105,9 @@ class Player:
             bonus += armor_item.stat_bonuses.get(name, 0)
         elif not armor_item and name == "Magic":
             bonus += 3   # unarmoured mage bonus
+        # Berry sickness — temporary skill debuff
+        if self.sick_days > 0 and self.sick_skill == name:
+            bonus -= self.sick_penalty
         return min(MAX_SKILL, max(0, base + bonus))
 
     def base_skill(self, name: str) -> int:

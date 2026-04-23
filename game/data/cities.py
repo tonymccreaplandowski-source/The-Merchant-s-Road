@@ -5,9 +5,12 @@ World layout (west → east):
   [Dar-Nakhil] ── desert ── [Rabenmark] ── mountain ── [Greyspire]
 
 Pricing logic:
-  Abundant items  →  merchant pays 70% of base value  (flooded with supply)
-  Scarce items    →  merchant pays 135% of base value (desperate for stock)
-  Normal items    →  merchant pays 100% of base value
+  Abundant items  →  price modifier 0.70  (sell ~45% of base, buy ~91% of base)
+  Scarce items    →  price modifier 1.60  (sell ~104% of base, buy ~208% of base)
+  Normal items    →  price modifier 1.00  (sell ~65% of base, buy ~130% of base)
+
+  Scarcity modifier raised to 1.60 (PT10 fix) so that scarce-city sell prices
+  visibly exceed the item's base value, confirming the arbitrage premium to the player.
 
 This creates real arbitrage opportunity: buy from a city with abundance,
 sell to a city where it's scarce.
@@ -35,7 +38,7 @@ class City:
                 return 0.70
         for tag in self.scarce:
             if tag in name_lower:
-                return 1.35
+                return 1.60
         return 1.00
 
     def modifier_label(self, item_name: str) -> str:
