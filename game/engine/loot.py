@@ -29,6 +29,20 @@ LOOT_BIAS_MODIFIERS = {
 }
 
 
+def generate_loot_min_rarity(min_rarity: str = "uncommon") -> Item:
+    """Generate loot guaranteed at or above min_rarity. Falls back to generate_loot() if pool is empty."""
+    RARITY_ORDER = ["common", "uncommon", "rare", "epic"]
+    min_idx      = RARITY_ORDER.index(min_rarity)
+    eligible     = set(RARITY_ORDER[min_idx:])
+
+    pool    = [item for item in ALL_ITEMS if item.rarity in eligible]
+    weights = [RARITY_WEIGHTS[item.rarity] for item in pool]
+
+    if not pool:
+        return generate_loot()
+    return random.choices(pool, weights=weights, k=1)[0]
+
+
 def generate_loot(bias: str = "common") -> Item:
     """
     Generate one loot item using weighted random selection.

@@ -342,10 +342,13 @@ def bag_screen(player: Player):
         clear()
         section("BAG")
         print()
+        readable_ct = sum(1 for i in player.inventory if i.item_type in ("book", "grimtotem"))
+        read_hint   = f"  {C.BYELLOW}({readable_ct}){C.RESET}" if readable_ct else ""
         choice = prompt_choice([
             f"Gear        {C.DIM}(equipped items, grimtotems){C.RESET}",
             f"Inventory   {inv_hint}",
             f"Use Item    {C.DIM}(potions, bandages, rations){C.RESET}{use_hint}",
+            f"Read        {C.DIM}(books + grimtotems){C.RESET}{read_hint}",
             f"Journal     {j_hint}",
             f"Skill Guide {C.DIM}(what each skill governs){C.RESET}",
             f"{C.BBLACK}Back{C.RESET}",
@@ -357,8 +360,11 @@ def bag_screen(player: Player):
         elif choice == 3:
             use_items_screen(player)
         elif choice == 4:
-            show_journal(player)
+            from ui.city import read_book_menu
+            read_book_menu(player)
         elif choice == 5:
+            show_journal(player)
+        elif choice == 6:
             show_skill_guide()
         else:
             return

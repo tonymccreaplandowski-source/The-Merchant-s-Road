@@ -256,13 +256,50 @@ def start_ambient_loop(context: str = "road") -> None:
 def resume_ambient_loop() -> None:
     """Resume the ambient loop using whatever context was last active.
     Used after combat ends (flee or victory) to restore the pre-combat music.
+    If location music was active before combat, restarts it instead of the beep loop.
     """
-    start_ambient_loop(_current_context)
+    if _location_music_active:
+        play_location_music()
+    else:
+        start_ambient_loop(_current_context)
 
 
 def stop_ambient_loop() -> None:
     """Stop the ambient loop as soon as the current note finishes."""
     _ambient_stop_event.set()
+
+
+# ── Location music (WAV file) ─────────────────────────────────────────────────
+
+_location_music_active: bool = False
+
+
+def play_location_music(filename: str = "test12.wav") -> None:
+    """Start looping location music from the sounds/ folder.
+    Stops the beep ambient first. Sets a flag so resume_ambient_loop()
+    knows to restore location music after combat rather than the beep loop.
+    """
+    global _location_music_active
+    stop_ambient_loop()
+    _location_music_active = True
+    try:
+        import winsound
+        path = _os.path.join(_SOUNDS_DIR, filename)
+        if _os.path.isfile(path):
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+    except Exception:
+        pass
+
+
+def stop_location_music() -> None:
+    """Stop location music and clear the active flag."""
+    global _location_music_active
+    _location_music_active = False
+    try:
+        import winsound
+        winsound.PlaySound(None, winsound.SND_PURGE)
+    except Exception:
+        pass
 
 
 # ── Battle music (WAV file) ──────────────────────────────────────────────────
@@ -488,10 +525,24 @@ def show_world_map(player):
     else:
         city = CITIES.get(player.current_city or "ashenvale")
         print(f"  {C.BYELLOW}Location: {city.name}{C.RESET}", end="   ")
+    if player.on_road:
+        h = player.hunger
+        if h >= 60:
+            hunger_color, hunger_label = C.BGREEN,  "Fed"
+        elif h >= 30:
+            hunger_color, hunger_label = C.BYELLOW, "Hungry"
+        elif h >= 10:
+            hunger_color, hunger_label = C.BRED,    "Starving"
+        else:
+            hunger_color, hunger_label = C.BRED,    "Critical"
+        hunger_str = f"   {hunger_color}Hunger{C.RESET} {hunger_label}"
+    else:
+        hunger_str = ""
     print(
         f"{C.BGREEN}HP{C.RESET} {player.hp}/{player.max_hp}   "
         f"{C.BYELLOW}Gold{C.RESET} {player.gold}gp   "
         f"{C.BCYAN}Bag{C.RESET} {len(player.inventory)}/{12} items"
+        f"{hunger_str}"
     )
     print()
 
@@ -589,6 +640,16 @@ def show_character_sheet(player):
     if player.max_mana > 0:
         print(f"  {C.BBLUE}Mana{C.RESET}  {player.mana}/{player.max_mana}   {mana_bar(player.mana, player.max_mana)}")
     print(f"  {C.BYELLOW}Gold{C.RESET}  {player.gold}gp")
+    hunger = getattr(player, "hunger", 100)
+    if hunger >= 60:
+        h_label, h_color = "Well-fed",      C.BGREEN
+    elif hunger >= 30:
+        h_label, h_color = "Hungry",        C.BYELLOW
+    elif hunger >= 10:
+        h_label, h_color = "Starving",      C.BRED
+    else:
+        h_label, h_color = "Critically Low", C.BRED
+    print(f"  {C.DIM}Hunger{C.RESET} {h_color}{h_label}{C.RESET}  {C.DIM}({hunger}/100){C.RESET}")
     print(f"  {C.DIM}Days on the road: {player.days_elapsed}{C.RESET}")
     print()
 
@@ -649,7 +710,8 @@ def show_journal(player):
         for i, entry in enumerate(player.journal, 1):
             print(f"  {C.BYELLOW}Entry {i}{C.RESET}")
             print()
-            typewrite(entry)
+            for line in entry.split("\n"):
+                print(f"  {line}")
             print()
             hr("─")
             print()

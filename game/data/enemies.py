@@ -197,6 +197,20 @@ ENEMY_TEMPLATES = [
         "enemy_spells":   [],
         "moves":          ["Slash", "Bash", "Parry"],
     },
+    {
+        "name":           "City Guard",
+        "armor_type":     "mail",
+        "hp_range":       (80, 110),
+        "combat_range":   (55, 75),
+        "defense_range":  (45, 65),
+        "agility_range":  (30, 50),
+        "description":    "A heavyset guard in city colours. He's seen your face before.",
+        "biomes":         [],
+        "loot_bias":      "uncommon",
+        "enemy_type":     "combat",
+        "enemy_spells":   [],
+        "moves":          ["Strike", "Bash", "Shove"],
+    },
 
     # ── Mage-type enemies ─────────────────────────────────────────────────────
 
@@ -262,6 +276,11 @@ def spawn_enemy(template: dict) -> Enemy:
         enemy_spells  = list(template.get("enemy_spells", [])),
         moves         = list(template.get("moves", ["Strike"])),
     )
+
+
+def spawn_city_guard() -> Enemy:
+    template = next(t for t in ENEMY_TEMPLATES if t["name"] == "City Guard")
+    return spawn_enemy(template)
 
 
 def get_enemy_for_biome(biome: str) -> Enemy:

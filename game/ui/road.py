@@ -7,7 +7,8 @@ import time
 import random
 
 from engine.player  import Player
-from engine.loot    import generate_loot
+from engine.loot    import generate_loot, generate_loot_min_rarity
+from engine.items_use import FOOD_HUNGER_RESTORE
 from engine.events  import get_event_enemies
 from engine.world   import take_road_step, abort_travel
 from data.cities    import CITIES
@@ -18,6 +19,7 @@ from ui.display     import (
     show_world_map, show_character_sheet,
     rarity_tag, typewrite, beep, play_melody,
     start_ambient_loop,
+    play_location_music, stop_location_music,
 )
 from ui.combat_loop import run_combat, loot_screen
 from ui.equipment   import bag_screen
@@ -145,7 +147,7 @@ def explore_event(player: Player, event):
     typewrite(f"You enter {event.name}...", indent=f"  {loc_color}")
     print(C.RESET, end="")
     time.sleep(0.8)
-    start_ambient_loop("dungeon")
+    play_location_music()
 
     for room_num, enemy in enumerate(enemies, 1):
         _location_header(player, event, room_num, total_known)
@@ -167,6 +169,7 @@ def explore_event(player: Player, event):
         if not won:
             print(f"\n  {C.BYELLOW}You fall back and escape {event.name}.{C.RESET}")
             time.sleep(1.0)
+            stop_location_music()
             start_ambient_loop("road")
             return
 
@@ -198,10 +201,22 @@ def explore_event(player: Player, event):
                 f"Retreat  {C.DIM}(leave {event.name}){C.RESET}",
             ])
             if nav == 1:
-                start_ambient_loop("tension")
+                play_location_music()
             if nav == 2:
-                print(f"\n  {C.BYELLOW}You make your way back out of {event.name}.{C.RESET}")
+                surv  = player.skill("Survival")
+                stlth = player.skill("Stealth")
+                roll  = random.randint(1, 20) + (surv + stlth) // 10
+                if roll >= 12:
+                    print(f"\n  {C.BGREEN}You find your way back out without incident.{C.RESET}")
+                else:
+                    dmg = random.randint(5, 15)
+                    player.take_damage(dmg)
+                    print(f"\n  {C.BRED}Your retreat is harried. −{dmg} HP.  HP: {player.hp}/{player.max_hp}{C.RESET}")
+                    if not player.is_alive():
+                        game_over(player)
+                        return
                 time.sleep(1.0)
+                stop_location_music()
                 start_ambient_loop("road")
                 return
 
@@ -213,7 +228,7 @@ def explore_event(player: Player, event):
     time.sleep(1.2)
 
     for _ in range(2):
-        loot  = generate_loot(bias=event.loot_bias)
+        loot  = generate_loot_min_rarity("uncommon")
         color = RARITY_COLOR.get(loot.rarity, C.WHITE)
         print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]  "
               f"{C.DIM}{loot.base_value}gp base{C.RESET}")
@@ -225,17 +240,19 @@ def explore_event(player: Player, event):
                 player.add_item(loot)
                 print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
 
-    if event.lore and event.lore not in player.journal:
-        player.journal.append(event.lore)
+    if event.lore_text and event.lore_text not in player.journal:
+        player.journal.append(event.lore_text)
         play_melody("journal_entry")
         print()
         hr("─")
         print(f"  {C.BYELLOW}❖ Journal updated{C.RESET}")
         print()
-        typewrite(event.lore)
+        for line in event.lore_text.split("\n"):
+            print(f"  {line}")
         print()
         hr("─")
 
+    stop_location_music()
     start_ambient_loop("road")
     pause()
 
@@ -299,9 +316,12 @@ def make_camp(player: Player):
     else:
         player.heal(hp_gain)
         player.restore_mana(mana_gain)
+        hunger_restore = FOOD_HUNGER_RESTORE.get(food.name, 30)
+        player.hunger  = min(100, player.hunger + hunger_restore)
         gain_str = f"+{hp_gain} HP"
         if mana_gain:
             gain_str += f", +{mana_gain} Mana"
+        gain_str += f", +{hunger_restore} hunger"
         print(f"  {C.BGREEN}You rest well through the night. {gain_str}.{C.RESET}")
         print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}  |  Mana: {player.mana}/{player.max_mana}{C.RESET}")
         if food.name == "Herb Bundle":
@@ -933,6 +953,7 @@ def road_loop(player):
             abort_travel(player)
             player.road_poison   = 0
             player.road_diseased = False
+            start_ambient_loop("city")
             print(f"\n  {C.DIM}You turn back.{C.RESET}")
             time.sleep(0.8)
             return
@@ -970,6 +991,21 @@ def road_loop(player):
                 _sd = "day" if player.sick_days == 1 else "days"
                 print(f"  {C.BYELLOW}You still feel unwell. ({player.sick_skill} dulled — {player.sick_days} {_sd} remaining){C.RESET}")
                 time.sleep(0.5)
+
+        # ── Hunger drain ──────────────────────────────────────────────────────
+        if player.hunger < 10:
+            player.take_damage(5)
+            print(f"  {C.BRED}You are too weak to continue without food. −5 HP.  HP: {player.hp}/{player.max_hp}{C.RESET}")
+            time.sleep(0.6)
+            if not player.is_alive():
+                game_over(player)
+                return
+        elif player.hunger < 30:
+            print(f"  {C.BRED}[Starving]{C.RESET}  {C.DIM}Weakness gnaws at you. (−5 Martial, −5 Survival){C.RESET}")
+            time.sleep(0.4)
+        elif player.hunger < 60:
+            print(f"  {C.BYELLOW}[Hungry]{C.RESET}  {C.DIM}Your stomach growls.{C.RESET}")
+            time.sleep(0.3)
 
         if arrived:
             player.road_poison   = 0

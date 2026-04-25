@@ -222,10 +222,10 @@ def negotiate_session(player: Player, merchant: dict) -> None:
         "log":        [],
     }
 
-    for round_num in range(1, 4):
+    for round_num in range(1, 5):
         session["round"] = round_num
 
-        if round_num == 3:
+        if round_num == 4:
             _go_for_close(player, merchant, session, forced=True)
             return
 

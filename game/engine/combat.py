@@ -226,7 +226,7 @@ def cast_enemy_spell(spell_name: str, enemy: Enemy, player: Player) -> Tuple[int
     armor_type = getattr(armor, "armor_type", None) or "none"
     eff        = spell["effectiveness"].get(armor_type, 1.0)
     skill_mod  = max(0.5, min(1.4, 1.0 + (enemy.combat_skill - player.defense) / 200.0))
-    raw        = spell["power"] * eff * skill_mod * random.uniform(0.80, 1.20)
+    raw        = spell["power"] * eff * skill_mod * random.uniform(0.80, 1.20) * 0.98
     return max(1, round(raw)), effectiveness_label(eff)
 
 

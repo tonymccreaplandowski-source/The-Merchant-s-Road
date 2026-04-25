@@ -12,6 +12,20 @@ USABLE_EFFECTS_OUTSIDE_COMBAT = {
     "berries_unknown", "torch",
 }
 
+# How much hunger each food item restores when eaten directly
+FOOD_HUNGER_RESTORE = {
+    "Unknown Berries":  20,
+    "Blueberries":      25,
+    "Dried Fruit":      25,
+    "Small Game Meat":  25,
+    "Wild Mushrooms":   20,
+    "Herb Bundle":      30,
+    "Dried Rations":    35,
+    "Dried Meat":       35,
+    "Venison":          40,
+    "Bear Meat":        40,
+}
+
 
 def use_potion(player: Player, potion, state: dict) -> str:
     """Apply a potion/consumable effect in combat. Returns a flavour message string."""
@@ -71,22 +85,29 @@ def use_potion(player: Player, potion, state: dict) -> str:
 
 def use_item_outside_combat(player: Player, item) -> str:
     """Apply a consumable effect outside of combat. Returns a message string."""
+    # Resolve hunger restoration upfront — applies to any food item regardless of effect
+    _hunger_gain  = FOOD_HUNGER_RESTORE.get(item.name, 0)
+    _before_hunger = player.hunger
+    if _hunger_gain:
+        player.hunger = min(100, player.hunger + _hunger_gain)
+    _hunger_suffix = f"  (+{player.hunger - _before_hunger} hunger)" if player.hunger > _before_hunger else ""
+
     effect = item.effect or ""
     if effect == "heal_15":
         before = player.hp; player.heal(15)
-        return f"You eat the {item.name}. +{player.hp - before} HP."
+        return f"You eat the {item.name}. +{player.hp - before} HP.{_hunger_suffix}"
     if effect == "heal_20":
         before = player.hp; player.heal(20)
-        return f"You use the {item.name}. +{player.hp - before} HP."
+        return f"You eat the {item.name}. +{player.hp - before} HP.{_hunger_suffix}"
     if effect == "heal_30":
         before = player.hp; player.heal(30)
         return f"You drink the {item.name}. +{player.hp - before} HP."
     if effect == "heal_35":
         before = player.hp; player.heal(35)
-        return f"You eat the {item.name}. +{player.hp - before} HP."
+        return f"You eat the {item.name}. +{player.hp - before} HP.{_hunger_suffix}"
     if effect == "heal_40":
         before = player.hp; player.heal(40)
-        return f"You eat the {item.name}. +{player.hp - before} HP."
+        return f"You eat the {item.name}. +{player.hp - before} HP.{_hunger_suffix}"
     if effect == "mana_25":
         before = player.mana; player.restore_mana(25)
         return f"You drink the {item.name}. +{player.mana - before} Mana."
@@ -100,7 +121,7 @@ def use_item_outside_combat(player: Player, item) -> str:
         return f"You light the {item.name}. The dark pulls back a little."
     if effect == "mushroom_wild":
         before_hp = player.hp; player.heal(15); player.restore_mana(10)
-        return f"You eat the {item.name}. +{player.hp - before_hp} HP, +10 Mana."
+        return f"You eat the {item.name}. +{player.hp - before_hp} HP, +10 Mana.{_hunger_suffix}"
     if effect == "berries_unknown":
         if random.random() < 0.05:
             sick_skill   = random.choice(SKILLS)
@@ -115,5 +136,7 @@ def use_item_outside_combat(player: Player, item) -> str:
                 f"(-{sick_penalty} {sick_skill} for {sick_days} day{'s' if sick_days != 1 else ''})"
             )
         before = player.hp; player.heal(10)
-        return f"You eat the {item.name}. Tasted fine. +{player.hp - before} HP."
+        return f"You eat the {item.name}. Tasted fine. +{player.hp - before} HP.{_hunger_suffix}"
+    if _hunger_suffix:
+        return f"You eat the {item.name}.{_hunger_suffix}"
     return f"You use the {item.name}."

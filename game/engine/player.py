@@ -77,11 +77,18 @@ class Player:
     # Time
     days_elapsed: int               = 0
 
+    # Pickpocket / underworld state
+    city_heat:   Dict[str, int]     = field(default_factory=dict)   # heat per city key, 0–100
+    city_wanted: set                = field(default_factory=set)     # set of city keys where player is wanted
+
     # Journal — stores lore texts and grimtotem entries
     journal: List[str]              = field(default_factory=list)
 
     # Spells — names of spells the player has learned via grimtotems
     learned_spells: List[str]       = field(default_factory=list)
+
+    # Hunger — 100 = well-fed, 0 = starving. Depletes per road step.
+    hunger: int                     = 100
 
     # Road buffs
     map_bonus: bool                 = False   # active Adventurer's Map (+event chance)
@@ -108,6 +115,11 @@ class Player:
         # Berry sickness — temporary skill debuff
         if self.sick_days > 0 and self.sick_skill == name:
             bonus -= self.sick_penalty
+        # Hunger penalties
+        if self.hunger < 10:
+            bonus -= 10
+        elif self.hunger < 30 and name in ("Martial", "Survival"):
+            bonus -= 5
         return min(MAX_SKILL, max(0, base + bonus))
 
     def base_skill(self, name: str) -> int:

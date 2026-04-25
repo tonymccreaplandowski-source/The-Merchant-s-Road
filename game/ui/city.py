@@ -349,6 +349,7 @@ def rest_at_inn(player: Player):
         player.gold -= cost
         player.heal(player.max_hp)
         player.restore_mana()
+        player.hunger = 100
         city_key = player.current_city or "ashenvale"
         flavour  = random.choice(INN_FLAVOUR.get(city_key, INN_FLAVOUR["ashenvale"]))
         clear()
@@ -444,6 +445,31 @@ def city_loop(player: Player):
     """Main city interaction loop. Exits when the player begins travelling."""
     global _city_merchants
 
+    from data.enemies import spawn_city_guard
+    from ui.combat_loop import run_combat
+
+    city_key = player.current_city
+    if city_key in player.city_wanted:
+        clear()
+        title_screen("CITY GATES")
+        print(f"\n  {C.BRED}A guard steps out of the gatehouse. He's been waiting.{C.RESET}")
+        print(f'  {C.DIM}"There you are. We\'ve had reports. You\'re coming with me."{C.RESET}')
+        print()
+        pause("Press Enter to face him...")
+        guard = spawn_city_guard()
+        won = run_combat(player, guard)
+        if not player.is_alive():
+            from ui.road import game_over
+            game_over(player)
+            return
+        if won:
+            player.city_wanted.discard(city_key)
+            player.city_heat[city_key] = min(100, player.city_heat.get(city_key, 0) + 20)
+            print(f"\n  {C.BYELLOW}You stand over him. For now, you're free — but the city has a long memory.{C.RESET}")
+            pause()
+        else:
+            return
+
     while True:
         city = CITIES[player.current_city]
         show_world_map(player)
@@ -461,11 +487,18 @@ def city_loop(player: Player):
             if readable_items else ""
         )
 
+        stealth_val = player.skill("Stealth")
+        if stealth_val >= 10:
+            prowl_label = f"Prowl             {C.DIM}(work the streets — Stealth: {stealth_val}){C.RESET}"
+        else:
+            prowl_label = f"{C.BBLACK}Prowl             (requires 10 Stealth — yours: {stealth_val}){C.RESET}"
+
         options = [
             f"The Market        {C.DIM}(3 merchants — buy, sell, negotiate){C.RESET}",
             f"Bag               {C.DIM}(gear + journal){C.RESET}",
             f"Training Hall     {C.DIM}(improve skills for gold){C.RESET}",
             f"Rest at the Inn   {C.DIM}(restore HP & mana — 10gp){C.RESET}",
+            prowl_label,
             f"Character Sheet   {C.DIM}(stats, equipment, inventory){C.RESET}",
             f"Read              {C.DIM}(books + grimtotems){C.RESET}{book_hint}",
             f"Travel            {C.DIM}(set out on the road){C.RESET}",
@@ -483,10 +516,21 @@ def city_loop(player: Player):
         elif choice == 4:
             rest_at_inn(player)
         elif choice == 5:
-            show_character_sheet(player)
+            if stealth_val >= 10:
+                from engine.pickpocket import prowl_screen
+                prowl_screen(player)
+                if not player.is_alive():
+                    from ui.road import game_over
+                    game_over(player)
+                    return
+            else:
+                print(f"\n  {C.BBLACK}You don't move quietly enough to work a crowd.{C.RESET}")
+                pause()
         elif choice == 6:
-            read_book_menu(player)
+            show_character_sheet(player)
         elif choice == 7:
+            read_book_menu(player)
+        elif choice == 8:
             if not adjacent:
                 print(f"\n  {C.BBLACK}No roads lead out of {city.name}.{C.RESET}")
                 pause()

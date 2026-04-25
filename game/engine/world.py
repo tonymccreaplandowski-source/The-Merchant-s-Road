@@ -67,6 +67,7 @@ def take_road_step(
     """
     player.road_steps    += 1
     player.days_elapsed  += 1   # each forward step costs one day
+    player.hunger         = max(0, player.hunger - 13)
 
     # ── Arrival ──────────────────────────────────────────────────────────────
     if player.road_steps >= player.road_total:
