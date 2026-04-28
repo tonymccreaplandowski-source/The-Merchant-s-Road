@@ -1,13 +1,13 @@
 """
 Special road events — caves and castles.
 These are explorable locations the player can choose to enter or pass by.
-Each has its own encounter pool and loot bias.
+Each has its own encounter pool, loot bias, boss, and navigation labels.
 """
 
 import random
 import copy
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 from data.enemies import ENEMY_TEMPLATES, spawn_enemy, Enemy
 
@@ -23,6 +23,12 @@ class RoadEvent:
     loot_bias: str        # loot quality bias inside
     lore_text: str = ""   # two-sentence lore entry added to Journal on clear
     count_range: tuple = (1, 4)   # min/max enemy count — resolved each time the event spawns
+    # ── Dungeon overhaul fields ───────────────────────────────────────────────
+    boss_name: str = ""           # displayed name of the final room boss
+    boss_hp_mult: float = 1.6     # HP multiplier applied to a standard biome enemy
+    boss_dmg_mult: float = 1.35   # damage multiplier applied to the boss
+    boss_drop_name: str = ""      # name of the unique item dropped on boss kill
+    nav_labels: List[str] = field(default_factory=list)  # directional exit label pool
 
 
 # ── Event pool ────────────────────────────────────────────────────────────────
@@ -41,6 +47,12 @@ CAVE_EVENTS = [
             "The Hollow Den was once a waystation for hunters who worked this stretch of road. "
             "No one is sure when the creatures moved in, or what happened to the last party who tried to reclaim it."
         ),
+        boss_name="The Den Warden",
+        boss_hp_mult=1.7,
+        boss_dmg_mult=1.4,
+        boss_drop_name="Warden's Hide Wraps",
+        nav_labels=["North passage", "Side chamber", "Deeper tunnel", "Down the slope",
+                    "Into the dark", "Low crawlway", "Eastern hollow"],
     ),
     RoadEvent(
         event_type="cave",
@@ -55,6 +67,12 @@ CAVE_EVENTS = [
             "The Dripping Grotto connects to an underground river that hasn't been mapped. "
             "Travellers who camped near the entrance reported hearing voices below, distinct from the water."
         ),
+        boss_name="The Grotto Abomination",
+        boss_hp_mult=1.8,
+        boss_dmg_mult=1.4,
+        boss_drop_name="Tideborn Pendant",
+        nav_labels=["Follow the water", "Down the carved steps", "Wet passage north",
+                    "Narrow fissure east", "Into the deep chamber", "Submerged alcove"],
     ),
     RoadEvent(
         event_type="cave",
@@ -69,6 +87,12 @@ CAVE_EVENTS = [
             "The Cache was used by a now-defunct caravan guild to move goods past the city toll roads. "
             "The guild's ledger, if it still exists, would name every official who looked the other way."
         ),
+        boss_name="The Cache Master",
+        boss_hp_mult=1.6,
+        boss_dmg_mult=1.3,
+        boss_drop_name="Shadow Fingers",
+        nav_labels=["Hidden back room", "Behind the shelving", "Trapdoor passage",
+                    "Side tunnel west", "Concealed alcove", "Lower storage"],
     ),
 ]
 
@@ -89,6 +113,13 @@ CASTLE_EVENTS = [
             "The Broken Keep was abandoned during a siege that nobody won, according to the only surviving account. "
             "The attacking force, the defending garrison, and the chronicler who wrote the account all vanished within the same week."
         ),
+        boss_name="The Castellan",
+        boss_hp_mult=1.8,
+        boss_dmg_mult=1.45,
+        boss_drop_name="Castellan's Vow",
+        nav_labels=["Up the gatehouse stairs", "Through the inner ward", "West tower",
+                    "Down to the undercroft", "The great hall", "Collapsed east wing",
+                    "Armory passage"],
     ),
     RoadEvent(
         event_type="castle",
@@ -106,6 +137,13 @@ CASTLE_EVENTS = [
             "The garrison was ordered to hold position by a commander who never returned with new orders. "
             "The soldiers held. Long past reason. Long past life, some say."
         ),
+        boss_name="The Forsaken Captain",
+        boss_hp_mult=1.9,
+        boss_dmg_mult=1.5,
+        boss_drop_name="Captain's Verdict",
+        nav_labels=["Barracks corridor", "Commander's wing", "The drill yard",
+                    "Down to the cells", "Chapel passage", "North watchtower",
+                    "Supply depot"],
     ),
     RoadEvent(
         event_type="castle",
@@ -123,6 +161,13 @@ CASTLE_EVENTS = [
             "The Merchant Lord commissioned the castle to demonstrate his wealth, a miscalculation that cost him exactly that. "
             "Builders were still working the eastern tower when the bailiffs arrived — they never finished, and neither did he."
         ),
+        boss_name="The Vault Sentinel",
+        boss_hp_mult=1.7,
+        boss_dmg_mult=1.35,
+        boss_drop_name="Folly Signet",
+        nav_labels=["Through the grand entrance", "The unfinished east tower",
+                    "Counting room passage", "Down to the vault", "Servants' corridor",
+                    "Half-built gallery"],
     ),
 ]
 
@@ -151,3 +196,21 @@ def get_event_enemies(event: RoadEvent) -> List[Enemy]:
             valid = ENEMY_TEMPLATES
         enemies.append(spawn_enemy(random.choice(valid)))
     return enemies
+
+
+def spawn_boss(event: RoadEvent) -> Enemy:
+    """
+    Spawn the boss enemy for this location.
+    Draws the strongest valid biome enemy and applies the event's HP/damage multipliers.
+    """
+    valid = [t for t in ENEMY_TEMPLATES if event.enemy_biome in t["biomes"]]
+    if not valid:
+        valid = ENEMY_TEMPLATES
+    # Pick the highest-HP-ceiling template as the base for the boss
+    template = max(valid, key=lambda t: t["hp_range"][1])
+    boss = spawn_enemy(template)
+    boss.name         = event.boss_name
+    boss.max_hp       = max(1, int(boss.max_hp * event.boss_hp_mult))
+    boss.hp           = boss.max_hp
+    boss.combat_skill = max(1, int(boss.combat_skill * event.boss_dmg_mult))
+    return boss

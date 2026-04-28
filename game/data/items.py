@@ -367,15 +367,47 @@ BOOK_ITEMS = [
          lore="Every city worth defending has already been lost once. The Almanac is a record of what that costs — in coin, in blood, and in the kind of reputation that doesn't recover."),
 ]
 
+# ── BOSS LOOT (named unique drops — one per location boss, never in random pool) ─
+BOSS_LOOT_ITEMS = [
+    Item("Warden's Hide Wraps",  480, "rare", "armor",
+         "Stripped hide, shaped by years of wear into something almost armour.",
+         [], armor_value=8, armor_type="leather",
+         stat_bonuses={"Stealth": 5, "Survival": 3, "Dungeoneering": 2},
+         lore="Stripped from the creature that held this cave for eleven years. The hide still smells of stone and old blood."),
+    Item("Tideborn Pendant",     520, "rare", "necklace",
+         "Always wet. Hums at the edge of hearing.",
+         [], stat_bonuses={"Magic": 6, "Dungeoneering": 4},
+         lore="Worn around something that should not have been wearing jewellery. The stone is always wet, regardless of where you keep it."),
+    Item("Shadow Fingers",       440, "rare", "ring",
+         "Worn smooth by work that left no official record.",
+         [], stat_bonuses={"Stealth": 7, "Merchantilism": 3},
+         lore="A ring known by guild runners as proof of full membership. No living guild member will admit what the initiation required."),
+    Item("Castellan's Vow",      600, "rare", "armor",
+         "Heavy mail, still well-maintained. Someone cared for it long after they stopped caring about anything else.",
+         [], armor_value=14, armor_type="mail",
+         stat_bonuses={"Martial": 5, "Survival": 3, "Stealth": -2},
+         lore="The Castellan held this keep for six years after his lord abandoned the cause. The armour held longer than the man inside it."),
+    Item("Captain's Verdict",    650, "rare", "weapon",
+         "A heavy officer's sword. It carries weight beyond the steel.",
+         [], weapon_type="sword",
+         stat_bonuses={"Martial": 5, "Speechcraft": 4},
+         lore="The Forsaken Captain issued his last order decades ago. This blade carried it. The order was: hold. It never stopped holding."),
+    Item("Folly Signet",         380, "rare", "ring",
+         "Gold, elaborate, slightly desperate.",
+         [], stat_bonuses={"Merchantilism": 6, "Speechcraft": 4},
+         lore="The Merchant Lord had this made to mark the completion of the castle. He wore it for three days before the bailiffs arrived. It passed to whoever killed the thing guarding his vault."),
+]
+
 # ── Combined lookup ───────────────────────────────────────────────────────────
 
 ALL_ITEMS = (
     WEAPON_ITEMS + ARMOR_ITEMS + ACCESSORY_ITEMS +
     POTION_ITEMS + SUPPLY_ITEMS + TRADE_ITEMS +
     GRIMTOTEM_ITEMS + FORAGE_ITEMS + HUNT_ITEMS + BOOK_ITEMS
+    # NOTE: BOSS_LOOT_ITEMS deliberately excluded — boss drops are never randomly generated
 )
 
-ITEM_LOOKUP = {item.name: item for item in ALL_ITEMS}
+ITEM_LOOKUP = {item.name: item for item in ALL_ITEMS + BOSS_LOOT_ITEMS}
 
 
 def get_items_by_rarity(rarity: str, item_type: str = None):

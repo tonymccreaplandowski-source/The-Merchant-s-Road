@@ -6,14 +6,16 @@ import sys
 import time
 import random
 
-from engine.player  import Player
-from engine.loot    import generate_loot, generate_loot_min_rarity
+from engine.player   import Player
+from engine.loot     import generate_loot, generate_loot_min_rarity
 from engine.items_use import FOOD_HUNGER_RESTORE
-from engine.events  import get_event_enemies
-from engine.world   import take_road_step, abort_travel
-from data.cities    import CITIES
+from engine.events   import get_event_enemies, spawn_boss
+from engine.dungeon  import generate_dungeon, DungeonRoom
+from engine.world    import take_road_step, abort_travel
+from data.cities     import CITIES
+from data.items      import ITEM_LOOKUP
 from data.road_flavor import road_flavor_line
-from ui.display     import (
+from ui.display      import (
     C, RARITY_COLOR,
     clear, pause, hr, section, title_screen, prompt_choice,
     show_world_map, show_character_sheet,
@@ -21,8 +23,10 @@ from ui.display     import (
     start_ambient_loop,
     play_location_music, stop_location_music,
 )
-from ui.combat_loop import run_combat, loot_screen
-from ui.equipment   import bag_screen
+from data.enemies        import ENEMY_TEMPLATES, spawn_enemy
+from ui.combat_loop      import run_combat, loot_screen
+from ui.equipment        import bag_screen
+from ui.dungeon_puzzles  import run_puzzle
 
 
 def _format_time(days: int) -> str:
@@ -44,24 +48,438 @@ def _format_time(days: int) -> str:
 
 # ── Exploration (caves & castles) ─────────────────────────────────────────────
 
-def _location_header(player, event, room_num, total_known):
+# Dead-end room atmospheric descriptions — indexed by dead_end_tag
+_DEAD_END_FLAVOR = {
+    "child_bedroom": (
+        "A small room. A child's straw mattress in the corner, flattened but intact. "
+        "A wooden toy soldier leans against the wall, missing one arm. "
+        "Someone hung a bundle of dried flowers above the bed — they are long dead, "
+        "but the twine holds. You cannot tell how long ago this was."
+    ),
+    "lovers_chamber": (
+        "Two chairs drawn close to a cold hearth, facing each other. "
+        "A cup on each armrest. The fire has not burned here in years. "
+        "On the floor between the chairs, a locket — open, both portrait panels scraped clean. "
+        "Whoever removed the faces did not want them found together."
+    ),
+    "weapons_cache": (
+        "Iron racks line the walls, most of them empty. Three broken blades remain, "
+        "too shattered to be worth salvaging. A dark stain on the floor near the door "
+        "is old enough to have turned black. Whatever happened here, it was not a clean fight. "
+        "The room smells of rust and old leather and something underneath both."
+    ),
+    "flooded_cellar": (
+        "Water has risen to knee height, black and still. Your torch reflects in it "
+        "without distortion — the surface is perfectly calm. Something moves below. "
+        "Not fast. Not toward you. But it moves. "
+        "You stand there longer than you should before you back away."
+    ),
+    "dark_shrine": (
+        "Symbols cover every surface — carved, not painted. They form no pattern you "
+        "recognise, but your eyes keep trying to find one. A bowl in the centre of the room "
+        "holds dried residue, dark red. No candles. No offering you understand. "
+        "The room is colder than the passage behind you, and silent in a way that feels deliberate."
+    ),
+    "set_dining_hall": (
+        "A long table, fully set. Plates, cups, cutlery — dust-covered but undisturbed. "
+        "Twelve chairs. Two are pushed back, as if the occupants stood suddenly. "
+        "The food is long gone, but the serving dishes remain in place. "
+        "Nobody cleared this table. Nobody came back to clear it."
+    ),
+}
+
+
+def _loc_header(event, label: str = ""):
     icon      = "🕳" if event.event_type == "cave" else "🏰"
     loc_color = C.BBLACK if event.event_type == "cave" else C.BYELLOW
     clear()
     print()
     print(f"  {loc_color}{icon}  {event.name.upper()}{C.RESET}")
-    if total_known > 0:
-        print(f"  {C.DIM}Room {room_num} of {total_known}{C.RESET}")
-    else:
-        print(f"  {C.DIM}Deeper still...{C.RESET}")
+    if label:
+        print(f"  {C.DIM}{label}{C.RESET}")
     print()
 
 
+def _retreat_check(player: Player, event) -> bool:
+    """
+    Roll retreat. Returns True = clean escape, False = damaged but escaped.
+    Formula: d100 ≤ (Dungeoneering + Stealth + Survival) / 3.
+    """
+    dung  = player.skill("Dungeoneering")
+    stlth = player.skill("Stealth")
+    surv  = player.skill("Survival")
+    avg   = (dung + stlth + surv) / 3
+
+    # Grappling Hook gives a large boost
+    has_hook = any(i.name == "Grappling Hook" for i in player.inventory)
+    has_rope = any(i.name == "Rope"           for i in player.inventory)
+    bonus    = 0
+    if has_hook:
+        hook_item = next(i for i in player.inventory if i.name == "Grappling Hook")
+        player.remove_item(hook_item)
+        bonus = 30
+        print(f"\n  {C.BYELLOW}You throw the grappling hook and haul yourself toward the exit.{C.RESET}")
+        time.sleep(0.6)
+    elif has_rope:
+        rope_item = next(i for i in player.inventory if i.name == "Rope")
+        player.remove_item(rope_item)
+        bonus = 15
+        print(f"\n  {C.BYELLOW}You use your rope to navigate the passage quickly.{C.RESET}")
+        time.sleep(0.6)
+
+    roll    = random.randint(1, 100)
+    success = roll <= min(95, avg + bonus)
+
+    print(f"  {C.DIM}Retreat roll: {roll:.0f} vs. threshold {min(95, avg + bonus):.0f}{C.RESET}")
+    time.sleep(0.4)
+
+    if success:
+        print(f"\n  {C.BGREEN}You find your way out without incident.{C.RESET}")
+        return True
+    else:
+        # Damage scales with how badly the roll missed
+        miss    = roll - (avg + bonus)
+        if miss > 30:
+            dmg = random.randint(15, 25)
+        else:
+            dmg = random.randint(5, 12)
+        player.take_damage(dmg)
+        print(f"\n  {C.BRED}Your retreat is harried. −{dmg} HP.  HP: {player.hp}/{player.max_hp}{C.RESET}")
+        return False
+
+
+def _offer_loot(player: Player, bias: str = "common"):
+    """Try a loot roll and offer the player the item."""
+    if random.random() < 0.30:
+        loot  = generate_loot(bias=bias)
+        color = RARITY_COLOR.get(loot.rarity, C.WHITE)
+        print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]")
+        if player.can_carry():
+            pick = prompt_choice(["Take it", "Leave it"])
+            if pick == 1:
+                player.add_item(loot)
+                print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
+        else:
+            print(f"  {C.BRED}Inventory full — left behind.{C.RESET}")
+    else:
+        print(f"\n  {C.DIM}Nothing of interest in the debris.{C.RESET}")
+
+
+def _handle_combat_room(player: Player, event, room: DungeonRoom,
+                        force_first: bool = False) -> bool:
+    """
+    Spawn and fight a single combat room enemy.
+    Returns True if player won and is still alive, False to abort dungeon.
+    """
+    valid = [t for t in ENEMY_TEMPLATES if event.enemy_biome in t["biomes"]]
+    if not valid:
+        valid = ENEMY_TEMPLATES
+    enemy = spawn_enemy(random.choice(valid))
+
+    if force_first:
+        print(f"  {C.BGREEN}You have the element of surprise.{C.RESET}")
+        time.sleep(0.8)
+
+    print(f"  {C.BRED}{enemy.name} stands in your path.{C.RESET}")
+    time.sleep(1.0)
+
+    won = run_combat(player, enemy, force_first=force_first)
+
+    if not player.is_alive():
+        return False
+    if not won:
+        return False  # fled
+    return True
+
+
+def _handle_trap_room(player: Player, event, room: DungeonRoom):
+    """
+    Trap room. Dungeoneering + Survival check. Possible HP loss or status.
+    Returns True if player is still alive after the trap.
+    """
+    trap_flavor = {
+        "spike":    ("Pressure plates glitter faintly underfoot. Notches in the walls.",
+                     "The floor drops fractionally. Iron spikes punch through."),
+        "gas":      ("A faint sweet smell. Residue of old powder on the ground.",
+                     "The canister ruptures. A pale gas floods the passage."),
+        "floor":    ("The stonework here is too smooth. Too regular.",
+                     "The floor gives way without warning. You plunge into a lower chamber."),
+        "tripwire": ("A glint of wire at ankle height, nearly invisible in the dark.",
+                     "The wire catches your boot. Something heavy swings from the ceiling."),
+    }
+    detect_flavor, trigger_flavor = trap_flavor.get(
+        room.trap_type, ("Something feels wrong here.", "It springs before you can react.")
+    )
+
+    _loc_header(event, "— Trap Room")
+    typewrite(detect_flavor)
+    print()
+
+    dung = player.skill("Dungeoneering")
+    surv = player.skill("Survival")
+    roll = random.randint(1, 20) + dung // 5 + surv // 10
+
+    # Lantern/torch improve trap detection
+    has_lantern = any(i.name == "Lantern"      for i in player.inventory)
+    has_torch   = any(i.name == "Torch Bundle" for i in player.inventory)
+    if has_lantern:
+        roll += 4
+    elif has_torch:
+        roll += 2
+
+    diff = max(8, 17 - dung // 8)   # scales: high Dungeoneering = lower threshold
+
+    if roll >= diff + 6:
+        # Disarm — bonus loot
+        print(f"\n  {C.BGREEN}You spot the mechanism, trace its workings, and disarm it cleanly.{C.RESET}")
+        print(f"  {C.DIM}Traps often guard something.{C.RESET}")
+        time.sleep(0.6)
+        _offer_loot(player, bias=event.loot_bias)
+    elif roll >= diff:
+        # Spotted but still triggered — halved damage
+        dmg = random.randint(4, 10)
+        player.take_damage(dmg)
+        print(f"\n  {C.BYELLOW}You see it but can't fully avoid it. −{dmg} HP.{C.RESET}")
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+    else:
+        # Full trigger
+        print(f"\n  {C.BRED}{trigger_flavor}{C.RESET}")
+        time.sleep(0.5)
+        dmg = random.randint(10, 25)
+        # Gas trap adds poison on bad roll
+        if room.trap_type == "gas" and random.random() < 0.45:
+            player.road_poison = 2
+            print(f"  {C.BRED}The gas burns your lungs. −{dmg} HP and poisoned (2 steps).{C.RESET}")
+        else:
+            print(f"  {C.BRED}The trap catches you full. −{dmg} HP.{C.RESET}")
+        player.take_damage(dmg)
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}{C.RESET}")
+
+    time.sleep(0.8)
+    pause("Press Enter to continue...")
+    return player.is_alive()
+
+
+def _handle_puzzle_room(player: Player, event, room: DungeonRoom) -> bool:
+    """
+    Puzzle room. Dispatch to puzzle system.
+    Returns True if puzzle was solved (may unlock progress or grant loot).
+    """
+    _loc_header(event, "— Puzzle Room")
+
+    if room.puzzle_gating:
+        print(f"  {C.BYELLOW}The only way forward is sealed. Something must be solved.{C.RESET}")
+    else:
+        print(f"  {C.DIM}A challenge presents itself. It is not the only way forward.{C.RESET}")
+    print()
+    time.sleep(0.8)
+
+    solved = run_puzzle(player, room.puzzle_type,
+                        timed=room.puzzle_timed, gating=room.puzzle_gating)
+    room.solved = solved
+
+    if solved:
+        if room.puzzle_gating:
+            print(f"\n  {C.BGREEN}The passage opens.{C.RESET}")
+        else:
+            # Optional puzzle reward
+            loot  = generate_loot_min_rarity("uncommon")
+            color = RARITY_COLOR.get(loot.rarity, C.WHITE)
+            print(f"\n  {C.BGREEN}Well solved.{C.RESET}")
+            print(f"  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]")
+            if player.can_carry():
+                pick = prompt_choice(["Take it", "Leave it"])
+                if pick == 1:
+                    player.add_item(loot)
+        # Puzzle lore
+        lore_line = f"A puzzle in {event.name} — solved."
+        if lore_line not in player.journal:
+            player.journal.append(lore_line)
+    else:
+        if room.puzzle_gating:
+            print(f"\n  {C.BRED}The passage stays sealed. You must find another route.{C.RESET}")
+        else:
+            print(f"\n  {C.DIM}The challenge remains unsolved. You move on.{C.RESET}")
+
+    time.sleep(0.8)
+    pause("Press Enter to continue...")
+    return solved
+
+
+def _handle_secret_room(player: Player, event, room: DungeonRoom):
+    """
+    Secret area. Dungeoneering roll to find it. Pure upside — no penalty.
+    """
+    _loc_header(event, "— Something Feels Off")
+    print(f"  {C.DIM}A draft comes from nowhere. A crack, perhaps. A seam in the stonework.{C.RESET}")
+    print()
+    time.sleep(0.6)
+
+    dung = player.skill("Dungeoneering")
+    # Lantern bonus
+    has_lantern = any(i.name == "Lantern"      for i in player.inventory)
+    has_torch   = any(i.name == "Torch Bundle" for i in player.inventory)
+    light_bonus = 8 if has_lantern else (4 if has_torch else 0)
+
+    # Lock Picks bonus for secret compartments
+    has_picks    = any(i.name == "Lock Picks" for i in player.inventory)
+    picks_bonus  = 6 if has_picks else 0
+
+    roll = random.randint(1, 20) + dung // 4 + light_bonus + picks_bonus
+
+    if roll >= 18:
+        # Full success — rare+ guaranteed
+        print(f"  {C.BGREEN}You find it. A hidden alcove, sealed and undisturbed.{C.RESET}")
+        time.sleep(0.6)
+        for _ in range(2):
+            loot  = generate_loot_min_rarity("rare")
+            color = RARITY_COLOR.get(loot.rarity, C.WHITE)
+            print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]"
+                  f"  {C.DIM}{loot.base_value}gp base{C.RESET}")
+            if player.can_carry():
+                pick = prompt_choice(["Take it", "Leave it"])
+                if pick == 1:
+                    player.add_item(loot)
+            else:
+                print(f"  {C.BRED}Inventory full — left behind.{C.RESET}")
+        if has_picks:
+            picks_item = next(i for i in player.inventory if i.name == "Lock Picks")
+            player.remove_item(picks_item)
+            print(f"\n  {C.DIM}Your lock picks opened a sealed compartment inside. (Consumed){C.RESET}")
+    elif roll >= 12:
+        # Partial — uncommon loot
+        print(f"  {C.BYELLOW}You sense something but can't quite locate it. "
+              f"Your hand finds a loose stone.{C.RESET}")
+        time.sleep(0.6)
+        loot  = generate_loot_min_rarity("uncommon")
+        color = RARITY_COLOR.get(loot.rarity, C.WHITE)
+        print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]")
+        if player.can_carry():
+            pick = prompt_choice(["Take it", "Leave it"])
+            if pick == 1:
+                player.add_item(loot)
+        else:
+            print(f"  {C.BRED}Inventory full — left behind.{C.RESET}")
+    else:
+        print(f"  {C.DIM}You search but find nothing. The draft may have been nothing at all.{C.RESET}")
+
+    time.sleep(0.6)
+    pause("Press Enter to continue...")
+
+
+def _handle_dead_end(player: Player, event, room: DungeonRoom):
+    """Dead end. Atmospheric lore only — no reward, no penalty."""
+    _loc_header(event, "— Dead End")
+    flavor = _DEAD_END_FLAVOR.get(
+        room.dead_end_tag,
+        "The passage closes off into rubble. Whatever was here, it's long gone."
+    )
+    typewrite(flavor)
+    print()
+    time.sleep(1.0)
+    pause("Press Enter to turn back...")
+
+
+def _handle_boss_room(player: Player, event, force_first: bool = False) -> bool:
+    """
+    Boss room. Named, buffed enemy. Returns True on victory, False on death/flee.
+    """
+    dung = player.skill("Dungeoneering")
+
+    # Pre-boss warning — scales with Dungeoneering
+    if dung >= 80:
+        print(f"\n  {C.BRED}You know exactly what waits beyond this door: {event.boss_name}.{C.RESET}")
+        print(f"  {C.BRED}Formidable. Do not underestimate it.{C.RESET}")
+    elif dung >= 50:
+        print(f"\n  {C.BRED}Something powerful waits ahead. The {event.boss_name}.{C.RESET}")
+    elif dung >= 25:
+        print(f"\n  {C.BYELLOW}Something powerful is close. You can feel it.{C.RESET}")
+    else:
+        print(f"\n  {C.DIM}The air changes. Something heavy lives in this room.{C.RESET}")
+    time.sleep(1.0)
+
+    boss = spawn_boss(event)
+
+    _loc_header(event, f"— {event.boss_name.upper()}")
+    print(f"  {C.BRED}{C.BOLD}{boss.name} rises to meet you.{C.RESET}")
+    print(f"  {C.DIM}HP: {boss.hp}   Combat: {boss.combat_skill}{C.RESET}")
+    time.sleep(1.2)
+
+    won = run_combat(player, boss, force_first=force_first)
+
+    if not player.is_alive():
+        return False
+    if not won:
+        return False
+    return True
+
+
+def _boss_clear_reward(player: Player, event):
+    """Award boss drop + location loot + journal on full clear."""
+    clear()
+    print()
+    print(f"  {C.BGREEN}{C.BOLD}{event.boss_name} is defeated.{C.RESET}")
+    print()
+    time.sleep(0.8)
+
+    # Named unique boss drop
+    if event.boss_drop_name:
+        drop = ITEM_LOOKUP.get(event.boss_drop_name)
+        if drop:
+            color = RARITY_COLOR.get(drop.rarity, C.WHITE)
+            print(f"  {C.BYELLOW}The {event.boss_name} drops:{C.RESET}")
+            print(f"  {color}{C.BOLD}{drop.name}{C.RESET}  [{rarity_tag(drop.rarity)}]"
+                  f"  {C.DIM}{drop.base_value}gp base{C.RESET}")
+            if drop.lore:
+                print(f"  {C.DIM}{drop.lore}{C.RESET}")
+            print()
+            if player.can_carry():
+                pick = prompt_choice(["Take it", "Leave it"])
+                if pick == 1:
+                    player.add_item(drop)
+                    print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
+            else:
+                print(f"  {C.BRED}Inventory full — left behind.{C.RESET}")
+            print()
+
+    # Room search — 2 × uncommon+
+    print(f"  {C.DIM}You search the chamber carefully...{C.RESET}")
+    time.sleep(0.8)
+    for _ in range(2):
+        loot  = generate_loot_min_rarity("uncommon")
+        color = RARITY_COLOR.get(loot.rarity, C.WHITE)
+        print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]"
+              f"  {C.DIM}{loot.base_value}gp base{C.RESET}")
+        if player.can_carry():
+            pick = prompt_choice(["Take it", "Leave it"])
+            if pick == 1:
+                player.add_item(loot)
+        else:
+            print(f"  {C.BRED}Inventory full — left behind.{C.RESET}")
+
+    # Journal
+    if event.lore_text and event.lore_text not in player.journal:
+        player.journal.append(event.lore_text)
+        play_melody("journal_entry")
+        print()
+        hr("─")
+        print(f"  {C.BYELLOW}❖ Journal updated — {event.name}{C.RESET}")
+        print()
+        for line in event.lore_text.split("\n"):
+            print(f"  {line}")
+        print()
+        hr("─")
+
+
 def explore_event(player: Player, event):
-    """Handle a cave or castle exploration event, room by room."""
+    """
+    Entry point for a cave or castle exploration event.
+    Generates a dungeon graph and walks the player through it room by room.
+    """
     icon      = "🕳" if event.event_type == "cave" else "🏰"
     loc_color = C.BBLACK if event.event_type == "cave" else C.BYELLOW
 
+    # ── Entry screen ──────────────────────────────────────────────────────────
     play_melody("location_found")
     clear()
     print()
@@ -69,21 +487,26 @@ def explore_event(player: Player, event):
     print()
     typewrite(event.description)
     print()
-    print(f"  {C.DIM}Enemies within: ???{C.RESET}")
+    print(f"  {C.DIM}What lies within: ???{C.RESET}")
     print()
 
+    # ── Pre-entry choices ─────────────────────────────────────────────────────
     scouted      = False
     stealth_used = False
-    total_known  = 0
-    enemies      = get_event_enemies(event)
     force_first  = False
+    cached_dungeon = None   # set when Adventurer's Map is used; reused on entry
+
+    # Adventurer's Map — peek at 2 room types before entering
+    has_map = any(i.name == "Adventurer's Map" for i in player.inventory)
 
     while True:
         options = []
         if not scouted:
-            options.append(f"Scout the area     {C.DIM}(Dungeoneering -- count enemies){C.RESET}")
+            options.append(f"Scout the area     {C.DIM}(Dungeoneering — count rooms){C.RESET}")
         if not stealth_used:
-            options.append(f"Attempt stealth    {C.DIM}(Stealth -- surprise first enemy){C.RESET}")
+            options.append(f"Attempt stealth    {C.DIM}(Stealth — ambush first enemy){C.RESET}")
+        if has_map:
+            options.append(f"Use Adventurer's Map  {C.DIM}(reveals 2 rooms ahead){C.RESET}")
         options.append(f"Enter boldly       {C.DIM}(commit now){C.RESET}")
         options.append(f"Pass by            {C.DIM}(continue on the road){C.RESET}")
 
@@ -93,46 +516,42 @@ def explore_event(player: Player, event):
         if "Scout the area" in chosen:
             scouted = True
             roll    = random.randint(1, 20) + player.skill("Dungeoneering") // 4
-            actual  = len(enemies)
             if roll >= 18:
-                total_known = actual
-                label = "enemy" if total_known == 1 else "enemies"
-                print(f"\n  {C.BGREEN}You study the entrance carefully. {total_known} {label} inside.{C.RESET}")
+                print(f"\n  {C.BGREEN}You read the location well. "
+                      f"You count the rooms and sense the layout.{C.RESET}")
             elif roll >= 12:
-                offset      = random.choice([-1, 0, 1])
-                approx      = max(1, actual + offset)
-                total_known = 0
-                label       = "enemy" if approx == 1 else "enemies"
-                print(f"\n  {C.BYELLOW}You make out movement inside — roughly {approx} {label}, maybe more.{C.RESET}")
+                print(f"\n  {C.BYELLOW}You make out movement and depth — "
+                      f"several distinct chambers.{C.RESET}")
             else:
                 print(f"\n  {C.DIM}You couldn't make out much from the entrance.{C.RESET}")
             pause("Press Enter to continue...")
-            clear()
-            print()
-            print(f"  {C.BYELLOW}{icon}  {event.name.upper()}{C.RESET}")
-            print()
-            typewrite(event.description)
-            count_str = str(total_known) if total_known > 0 else "???"
-            print(f"  {C.DIM}Enemies within: {count_str}{C.RESET}")
-            print()
 
         elif "Attempt stealth" in chosen:
-            stealth_used    = True
-            stealth_val     = player.skill("Stealth")
-            success_chance  = max(0.05, min(0.95, 0.15 + (stealth_val - 5) * 0.013))
+            stealth_used   = True
+            stealth_val    = player.skill("Stealth")
+            success_chance = max(0.05, min(0.95, 0.15 + (stealth_val - 5) * 0.013))
             if random.random() < success_chance:
                 force_first = True
-                print(f"\n  {C.BGREEN}You slip inside undetected. The first enemy has no idea you're here.{C.RESET}")
+                print(f"\n  {C.BGREEN}You slip inside undetected. "
+                      f"The first enemy has no idea you're here.{C.RESET}")
             else:
                 print(f"\n  {C.BYELLOW}You fumble the approach. No advantage gained.{C.RESET}")
             pause("Press Enter to continue...")
-            clear()
-            print()
-            print(f"  {C.BYELLOW}{icon}  {event.name.upper()}{C.RESET}")
-            print()
-            count_str = str(total_known) if total_known > 0 else "???"
-            print(f"  {C.DIM}Enemies within: {count_str}{C.RESET}")
-            print()
+
+        elif "Adventurer's Map" in chosen:
+            has_map = False
+            map_item = next(i for i in player.inventory if i.name == "Adventurer's Map")
+            player.remove_item(map_item)
+            # Generate the dungeon once and cache it so the preview matches the run
+            cached_dungeon = generate_dungeon(event)
+            preview_rooms  = [r for r in cached_dungeon.values()
+                               if r.room_type not in ("entry",)][:2]
+            print(f"\n  {C.BYELLOW}The map reveals what lies ahead:{C.RESET}")
+            for i, pr in enumerate(preview_rooms, 1):
+                rtype_label = pr.room_type.replace("_", " ").title()
+                print(f"  {C.DIM}Room {i}: {rtype_label}{C.RESET}")
+            print(f"  {C.DIM}(Map consumed){C.RESET}")
+            pause("Press Enter to continue...")
 
         elif "Pass by" in chosen:
             print(f"\n  {C.DIM}You give it a wide berth and press on.{C.RESET}")
@@ -140,7 +559,24 @@ def explore_event(player: Player, event):
             return
 
         else:
-            break
+            break  # Enter boldly
+
+    # ── Activate torch/lantern on entry ───────────────────────────────────────
+    has_lantern     = any(i.name == "Lantern"      for i in player.inventory)
+    has_torch       = any(i.name == "Torch Bundle" for i in player.inventory)
+    has_tinderbox   = any(i.name == "Tinderbox"    for i in player.inventory)
+
+    if (has_torch or has_lantern) and not has_tinderbox:
+        print(f"\n  {C.BYELLOW}You have a light source but no tinderbox. "
+              f"You cannot light it.{C.RESET}")
+        has_torch   = False
+        has_lantern = False
+    elif has_lantern:
+        print(f"\n  {C.BYELLOW}You light your lantern. The darkness retreats.{C.RESET}")
+    elif has_torch:
+        torch_item = next(i for i in player.inventory if i.name == "Torch Bundle")
+        player.remove_item(torch_item)
+        print(f"\n  {C.BYELLOW}You light a torch. The shadows pull back.{C.RESET}")
 
     clear()
     print()
@@ -149,112 +585,124 @@ def explore_event(player: Player, event):
     time.sleep(0.8)
     play_location_music()
 
-    for room_num, enemy in enumerate(enemies, 1):
-        _location_header(player, event, room_num, total_known)
+    # ── Generate dungeon ──────────────────────────────────────────────────────
+    rooms     = generate_dungeon(event)
+    current   = 0          # always start at room 0 (entry)
+    rooms[current].visited = True
+    dungeon_cleared = False
 
-        is_ambush = force_first and room_num == 1
-        if is_ambush:
-            print(f"  {C.BGREEN}You strike from the shadows -- the {enemy.name} is caught off guard.{C.RESET}")
-            time.sleep(0.8)
+    # ── Navigation loop ───────────────────────────────────────────────────────
+    while True:
+        room = rooms[current]
 
-        print(f"  {C.BRED}{enemy.name} bars your way.{C.RESET}")
-        time.sleep(1.0)
+        # ── Handle room ───────────────────────────────────────────────────────
+        if not room.visited or room.room_type in ("combat", "boss"):
+            room.visited = True
 
-        won = run_combat(player, enemy, force_first=is_ambush)
+            if room.room_type == "entry":
+                _loc_header(event, "— Entrance")
+                print(f"  {C.DIM}You stand inside the entrance. The air changes.{C.RESET}")
+                time.sleep(0.6)
 
-        if not player.is_alive():
-            game_over(player)
-            return
+            elif room.room_type == "combat":
+                _loc_header(event, "— Combat")
+                alive = _handle_combat_room(player, event, room,
+                                             force_first=(force_first and current == 0))
+                force_first = False   # only applies to room 0
+                if not player.is_alive():
+                    game_over(player)
+                    return
+                if not alive:
+                    print(f"\n  {C.BYELLOW}You fall back out of {event.name}.{C.RESET}")
+                    time.sleep(1.0)
+                    stop_location_music()
+                    start_ambient_loop("road")
+                    return
+                # Between-combat loot roll
+                print()
+                print(f"  {C.DIM}You search the area...{C.RESET}")
+                time.sleep(0.5)
+                _offer_loot(player, bias=room.loot_bias)
 
-        if not won:
-            print(f"\n  {C.BYELLOW}You fall back and escape {event.name}.{C.RESET}")
+            elif room.room_type == "trap":
+                alive = _handle_trap_room(player, event, room)
+                if not alive:
+                    game_over(player)
+                    return
+
+            elif room.room_type == "puzzle":
+                _handle_puzzle_room(player, event, room)
+
+            elif room.room_type == "secret":
+                _handle_secret_room(player, event, room)
+
+            elif room.room_type == "dead_end":
+                _handle_dead_end(player, event, room)
+
+            elif room.room_type == "boss":
+                won = _handle_boss_room(player, event,
+                                         force_first=force_first)
+                if not player.is_alive():
+                    game_over(player)
+                    return
+                if not won:
+                    print(f"\n  {C.BYELLOW}You flee {event.name}.{C.RESET}")
+                    time.sleep(1.0)
+                    stop_location_music()
+                    start_ambient_loop("road")
+                    return
+                # Victory
+                dungeon_cleared = True
+                _boss_clear_reward(player, event)
+                stop_location_music()
+                start_ambient_loop("road")
+                pause()
+                return
+
+        # ── Navigation: build exit menu ───────────────────────────────────────
+        exits   = room.exits
+        # Check if any gating puzzle blocks an exit
+        nav_opts = []
+        nav_dest = []
+
+        for label, dest_id in exits:
+            dest_room = rooms[dest_id]
+            # Gating puzzle already attempted and failed — lock the exit
+            if (dest_room.room_type == "puzzle"
+                    and dest_room.puzzle_gating
+                    and dest_room.visited
+                    and not dest_room.solved):
+                nav_opts.append(f"{C.BBLACK}{label}  (sealed — puzzle unsolved){C.RESET}")
+                nav_dest.append(None)   # blocked
+            else:
+                visited_mark = f"  {C.DIM}[visited]{C.RESET}" if dest_room.visited else ""
+                nav_opts.append(f"{label}{visited_mark}")
+                nav_dest.append(dest_id)
+
+        nav_opts.append(f"Retreat  {C.DIM}(leave {event.name}){C.RESET}")
+        nav_dest.append("retreat")
+
+        print()
+        choice = prompt_choice(nav_opts)
+        dest = nav_dest[choice - 1]
+
+        if dest == "retreat":
+            clean = _retreat_check(player, event)
+            if not player.is_alive():
+                game_over(player)
+                return
             time.sleep(1.0)
             stop_location_music()
             start_ambient_loop("road")
             return
 
-        is_final = (room_num == len(enemies))
-        if not is_final:
-            _location_header(player, event, room_num, total_known)
-            print(f"  {C.BGREEN}Room {room_num} cleared.{C.RESET}")
-            print()
-            print(f"  {C.DIM}You search the area...{C.RESET}")
-            time.sleep(0.6)
+        if dest is None:
+            print(f"\n  {C.DIM}That passage is sealed. Find another way.{C.RESET}")
+            time.sleep(0.8)
+            continue
 
-            if random.random() < 0.30:
-                loot  = generate_loot(bias="common")
-                color = RARITY_COLOR.get(loot.rarity, C.WHITE)
-                print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]")
-                if player.can_carry():
-                    pick = prompt_choice(["Take it", "Leave it"])
-                    if pick == 1:
-                        player.add_item(loot)
-                        print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
-                else:
-                    print(f"  {C.BRED}Inventory full -- left behind.{C.RESET}")
-            else:
-                print(f"\n  {C.DIM}Nothing of interest.{C.RESET}")
-
-            print()
-            nav = prompt_choice([
-                "Press deeper",
-                f"Retreat  {C.DIM}(leave {event.name}){C.RESET}",
-            ])
-            if nav == 1:
-                play_location_music()
-            if nav == 2:
-                surv  = player.skill("Survival")
-                stlth = player.skill("Stealth")
-                roll  = random.randint(1, 20) + (surv + stlth) // 10
-                if roll >= 12:
-                    print(f"\n  {C.BGREEN}You find your way back out without incident.{C.RESET}")
-                else:
-                    dmg = random.randint(5, 15)
-                    player.take_damage(dmg)
-                    print(f"\n  {C.BRED}Your retreat is harried. −{dmg} HP.  HP: {player.hp}/{player.max_hp}{C.RESET}")
-                    if not player.is_alive():
-                        game_over(player)
-                        return
-                time.sleep(1.0)
-                stop_location_music()
-                start_ambient_loop("road")
-                return
-
-    # All rooms cleared
-    clear()
-    print()
-    print(f"  {C.BGREEN}{C.BOLD}You clear {event.name}!{C.RESET}")
-    print(f"  {C.DIM}You search the area carefully...{C.RESET}")
-    time.sleep(1.2)
-
-    for _ in range(2):
-        loot  = generate_loot_min_rarity("uncommon")
-        color = RARITY_COLOR.get(loot.rarity, C.WHITE)
-        print(f"\n  Found: {color}{C.BOLD}{loot.name}{C.RESET}  [{rarity_tag(loot.rarity)}]  "
-              f"{C.DIM}{loot.base_value}gp base{C.RESET}")
-        if not player.can_carry():
-            print(f"  {C.BRED}Inventory full -- left behind.{C.RESET}")
-        else:
-            pick = prompt_choice(["Take it", "Leave it"])
-            if pick == 1:
-                player.add_item(loot)
-                print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
-
-    if event.lore_text and event.lore_text not in player.journal:
-        player.journal.append(event.lore_text)
-        play_melody("journal_entry")
-        print()
-        hr("─")
-        print(f"  {C.BYELLOW}❖ Journal updated{C.RESET}")
-        print()
-        for line in event.lore_text.split("\n"):
-            print(f"  {line}")
-        print()
-        hr("─")
-
-    stop_location_music()
-    start_ambient_loop("road")
-    pause()
+        current = dest
+        play_location_music()  # re-cue loop on room transition
 
 
 # ── Camping ───────────────────────────────────────────────────────────────────

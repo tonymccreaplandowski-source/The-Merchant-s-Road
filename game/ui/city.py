@@ -200,10 +200,10 @@ def merchant_screen(player: Player, city, merchant: dict):
                 bp   = buy_price(item, city, gp_delta)
 
                 if player.gold < bp:
-                    print(f"\n  {C.RED}Not enough gold. Need {bp}gp, have {player.gold}gp.{C.RESET}")
+                    print(f"\n  {C.BRED}Not enough gold. Need {bp}gp, have {player.gold}gp.{C.RESET}")
                     pause("Press Enter to continue...")
                 elif not player.can_carry():
-                    print(f"\n  {C.RED}Pack full ({MAX_INVENTORY}/{MAX_INVENTORY} items).{C.RESET}")
+                    print(f"\n  {C.BRED}Pack full ({MAX_INVENTORY}/{MAX_INVENTORY} items).{C.RESET}")
                     pause("Press Enter to continue...")
                 else:
                     player.gold -= bp
@@ -324,10 +324,10 @@ def train_skills(player: Player):
         cost       = _training_cost(current)
 
         if current >= 100:
-            print(f"\n  {C.RED}That skill is already at its peak.{C.RESET}")
+            print(f"\n  {C.BRED}That skill is already at its peak.{C.RESET}")
             pause("Press Enter to continue...")
         elif player.gold < cost:
-            print(f"\n  {C.RED}Not enough gold. Need {cost}gp, have {player.gold}gp.{C.RESET}")
+            print(f"\n  {C.BRED}Not enough gold. Need {cost}gp, have {player.gold}gp.{C.RESET}")
             pause("Press Enter to continue...")
         else:
             player.gold -= cost

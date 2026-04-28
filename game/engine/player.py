@@ -101,6 +101,10 @@ class Player:
         """
         base   = self.skills.get(name, 0)
         bonus  = 0
+        # Weapon stat bonuses (e.g. Captain's Verdict)
+        weapon_item = self.equipped.get("weapon")
+        if weapon_item and weapon_item.stat_bonuses:
+            bonus += weapon_item.stat_bonuses.get(name, 0)
         # Accessories (ring, necklace)
         for slot in ("ring", "necklace"):
             item = self.equipped.get(slot)

@@ -60,12 +60,13 @@ def effectiveness_label(value: float) -> str:
 
 def fresh_state() -> Dict[str, Any]:
     return {
-        "player_defensive":   False,   # Parry — reduces next hit by 40%
-        "player_evading":     False,   # Feint/Pot Shot — 50% miss chance on enemy counter
-        "enemy_staggered":    0,       # turns remaining enemy combat_skill -10
-        "enemy_slowed":       0,       # turns remaining enemy agility -15
-        "player_str_boost":   False,   # Strength Draft active
-        "player_agi_boost":   False,   # Swiftness Tonic active
+        "player_defensive":    False,   # Parry — reduces next hit by 40%
+        "player_evading":      False,   # Feint/Pot Shot — 50% miss chance on enemy counter
+        "enemy_staggered":     0,       # turns remaining; applies stagger_penalty to enemy atk
+        "enemy_stagger_penalty": 0,     # cumulative combat_skill reduction while staggered
+        "enemy_slowed":        0,       # turns remaining; reduces enemy effective combat_skill
+        "player_str_boost":    False,   # Strength Draft active
+        "player_agi_boost":    False,   # Swiftness Tonic active
     }
 
 
@@ -149,7 +150,8 @@ def apply_move_special(move_name: str, state: Dict, player: Player, enemy: Enemy
         state["player_evading"] = True
         return "You keep moving — hard to pin down."
     if special == "stagger":
-        state["enemy_staggered"] = 2
+        state["enemy_staggered"]      = 2
+        state["enemy_stagger_penalty"] = state.get("enemy_stagger_penalty", 0) + 10
         return f"{enemy.name} loses their footing."
     if special == "mana_discount":
         player.mana_discount = 5
@@ -193,8 +195,8 @@ def cast_spell(spell_name: str, player: Player, enemy: Enemy, state: Dict) -> Tu
     stag = ""
 
     if special == "slow":
-        state["enemy_slowed"] = True
-        stag = "Target slowed — enemy loses next attack"
+        state["enemy_slowed"] = 2
+        stag = "Target slowed — reduced combat skill for 2 turns"
 
     elif special == "evade":
         state["player_evading"] = True
@@ -257,44 +259,58 @@ def enemy_attack(enemy: Enemy, player: Player, state: Dict) -> Tuple[int, str, b
             state["player_defensive"] = False
             dmg = max(1, round(dmg * 0.80))
 
-        return dmg, f"casts {spell_name}\!", True
+        return dmg, f"casts {spell_name}!", True
 
     # ── Physical attack ───────────────────────────────────────────────────
     move_name = random.choice(enemy.moves) if enemy.moves else "Strike"
     move      = MOVES.get(move_name, {})
 
+    # Stagger: decrement counter; clear penalty when it expires
     if state.get("enemy_staggered", 0) > 0:
         state["enemy_staggered"] -= 1
-        enemy.combat_skill = max(0, enemy.combat_skill - 10)
+        if state["enemy_staggered"] == 0:
+            state["enemy_stagger_penalty"] = 0
 
-    atk = enemy.combat_skill + random.randint(1, 20)
+    # Slow: decrement counter
+    if state.get("enemy_slowed", 0) > 0:
+        state["enemy_slowed"] -= 1
+
+    effective_combat = max(0, enemy.combat_skill
+                           - state.get("enemy_stagger_penalty", 0)
+                           - (8 if state.get("enemy_slowed", 0) > 0 else 0))
+
+    atk = effective_combat + random.randint(1, 20)
     dfn = player.defense   + random.randint(1, 20)
 
     if atk <= dfn:
         return 0, move_name, False
 
+    # Swiftness Tonic — higher evade chance on enemy physical counter
+    evade_threshold = 0.35 if state.get("player_agi_boost") else 0.50
     if state.get("player_evading"):
         state["player_evading"] = False
-        if random.random() < 0.50:
+        if random.random() < evade_threshold:
             return 0, f"{move_name} (evaded)", False
 
-    # PT10 fix: enemy damage now scales with combat_skill relative to player
-    # defense, mirroring the player-attack skill_mod so numbers feel consistent.
-    skill_mod = max(0.5, min(1.5, 1.0 + (enemy.combat_skill - player.defense) / 200.0))
+    # Consume agi_boost after its evade window passes
+    if state.get("player_agi_boost"):
+        state["player_agi_boost"] = False
+
+    skill_mod = max(0.5, min(1.5, 1.0 + (effective_combat - player.defense) / 200.0))
 
     if state.get("player_defensive"):
         state["player_defensive"] = False
         armor      = player.equipped.get("armor")
         armor_type = getattr(armor, "armor_type", None) or "none"
         reduction  = {"none": 0.0, "cloth": 0.10, "leather": 0.20, "mail": 0.35}.get(armor_type, 0.0)
-        base       = move.get("power", max(5, enemy.combat_skill // 3)) * skill_mod * random.uniform(0.8, 1.2)
+        base       = move.get("power", max(5, effective_combat // 3)) * skill_mod * random.uniform(0.8, 1.2)
         dmg        = max(1, round(base * (1.0 - reduction) * 0.75))
         return dmg, move_name, False
 
     armor      = player.equipped.get("armor")
     armor_type = getattr(armor, "armor_type", None) or "none"
     reduction  = {"none": 0.0, "cloth": 0.10, "leather": 0.20, "mail": 0.35}.get(armor_type, 0.0)
-    base       = move.get("power", max(5, enemy.combat_skill // 3)) * skill_mod * random.uniform(0.8, 1.2)
+    base       = move.get("power", max(5, effective_combat // 3)) * skill_mod * random.uniform(0.8, 1.2)
     dmg        = max(1, round(base * (1.0 - reduction)))
     return dmg, move_name, False
 

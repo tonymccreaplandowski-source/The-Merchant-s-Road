@@ -44,7 +44,7 @@ def _pool_blacksmith():
 def _pool_apothecary():
     return list(POTION_ITEMS)
 
-def _pool_librarian(magic_skill: int = 0):
+def _pool_librarian(magic_skill: int = 25):
     from data.items import BOOK_ITEMS
     pool = list(BOOK_ITEMS)
     magic_bonus = magic_skill * 0.002
