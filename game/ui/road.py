@@ -164,6 +164,50 @@ def _offer_loot(player: Player, bias: str = "common"):
     else:
         print(f"\n  {C.DIM}Nothing of interest in the debris.{C.RESET}")
 
+    # Lore bonus: Geology of Greyspire adds a separate ore/material find roll
+    from engine.lore_bonuses import get_lore_bonus
+    from data.items import ALL_ITEMS
+    ore_bonus = get_lore_bonus(player, "loot_ore_bonus", context=player.current_city or "")
+    if ore_bonus and random.randint(1, 100) <= ore_bonus and player.can_carry():
+        ore_pool = [i for i in ALL_ITEMS if i.item_type in ("material", "gem")]
+        if ore_pool:
+            ore_item = random.choice(ore_pool)
+            color    = RARITY_COLOR.get(ore_item.rarity, C.WHITE)
+            print(f"  {C.DIM}Your geological knowledge catches something others would miss:{C.RESET}")
+            print(f"  Found: {color}{C.BOLD}{ore_item.name}{C.RESET}  [{rarity_tag(ore_item.rarity)}]")
+            pick = prompt_choice(["Take it", "Leave it"])
+            if pick == 1:
+                player.add_item(ore_item)
+                print(f"  {C.BGREEN}Added to inventory.{C.RESET}")
+
+
+def _stealth_approach(player: Player) -> bool:
+    """Two-roll per-room stealth mini-game. Returns True if surprise is gained."""
+    stealth = player.skill("Stealth")
+    print()
+    choice = prompt_choice([
+        f"Creep forward      {C.DIM}(Stealth: {stealth} — attempt surprise){C.RESET}",
+        f"Enter directly     {C.DIM}(no advantage){C.RESET}",
+    ], "How do you approach?")
+    if choice == 2:
+        return False
+
+    roll1 = random.randint(1, 20) + stealth // 4
+    if roll1 < 12:
+        print(f"\n  {C.BYELLOW}You edge forward — but a loose stone gives you away.{C.RESET}")
+        pause("Press Enter to engage...")
+        return False
+
+    roll2 = random.randint(1, 20) + stealth // 4
+    if roll2 >= 14:
+        print(f"\n  {C.BGREEN}You hold your breath and close the distance unseen.{C.RESET}")
+        pause("Press Enter to strike...")
+        return True
+    else:
+        print(f"\n  {C.BYELLOW}You get within range — but hesitate a beat too long.{C.RESET}")
+        pause("Press Enter to engage...")
+        return False
+
 
 def _handle_combat_room(player: Player, event, room: DungeonRoom,
                         force_first: bool = False) -> bool:
@@ -176,11 +220,15 @@ def _handle_combat_room(player: Player, event, room: DungeonRoom,
         valid = ENEMY_TEMPLATES
     enemy = spawn_enemy(random.choice(valid))
 
+    # Per-room stealth mini-game (skipped if pre-dungeon stealth already granted surprise)
+    if not force_first and player.skill("Stealth") >= 5:
+        force_first = _stealth_approach(player)
+
     if force_first:
-        print(f"  {C.BGREEN}You have the element of surprise.{C.RESET}")
+        print(f"\n  {C.BGREEN}You have the element of surprise.{C.RESET}")
         time.sleep(0.8)
 
-    print(f"  {C.BRED}{enemy.name} stands in your path.{C.RESET}")
+    print(f"\n  {C.BRED}{enemy.name} stands in your path.{C.RESET}")
     time.sleep(1.0)
 
     won = run_combat(player, enemy, force_first=force_first)
@@ -272,7 +320,7 @@ def _handle_puzzle_room(player: Player, event, room: DungeonRoom) -> bool:
     else:
         print(f"  {C.DIM}A challenge presents itself. It is not the only way forward.{C.RESET}")
     print()
-    time.sleep(0.8)
+    pause("Press Enter to face the challenge...")
 
     solved = run_puzzle(player, room.puzzle_type,
                         timed=room.puzzle_timed, gating=room.puzzle_gating)
@@ -702,7 +750,6 @@ def explore_event(player: Player, event):
             continue
 
         current = dest
-        play_location_music()  # re-cue loop on room transition
 
 
 # ── Camping ───────────────────────────────────────────────────────────────────
@@ -724,38 +771,60 @@ FIREWOOD_NAMES = {"Firewood"}
 
 
 def make_camp(player: Player):
-    """Resource-based camping. Costs 1 Firewood + 1 food item."""
+    """
+    Resource-based camping.
+    Quick camp  : 1 Firewood + 1 food → partial HP/mana/hunger restore.
+    Sleep overnight: 1 Firewood + 2 food → full hunger reset (100), HP restore, day advances.
+    """
     clear()
     title_screen("MAKE CAMP")
 
-    firewood = next((i for i in player.inventory if i.name in FIREWOOD_NAMES), None)
-    food     = next((i for i in player.inventory if i.name in CAMP_FOOD), None)
+    firewood_items = [i for i in player.inventory if i.name in FIREWOOD_NAMES]
+    food_items     = [i for i in player.inventory if i.name in CAMP_FOOD]
 
-    if not firewood:
+    if not firewood_items:
         print(f"\n  {C.BRED}You have no firewood. You cannot start a fire.{C.RESET}")
         print(f"  {C.DIM}Buy firewood in a city, or try Bushcraft to forage some.{C.RESET}")
         pause()
         return
 
-    if not food:
+    if not food_items:
         print(f"\n  {C.BRED}You have nothing to eat. Camp would be a cold, hungry affair.{C.RESET}")
         print(f"  {C.DIM}Stock up on rations before you travel, or try Bushcraft.{C.RESET}")
         pause()
         return
 
-    if player.hp >= player.max_hp:
-        print(f"\n  {C.BGREEN}You are in full health.{C.RESET}{C.DIM} Save your supplies for when you need them.{C.RESET}")
-        pause()
-        return
+    firewood  = firewood_items[0]
+    can_sleep = len(food_items) >= 2
 
+    if can_sleep:
+        print(f"\n  {C.DIM}You have enough supplies for a proper night's rest.{C.RESET}")
+        print()
+        camp_choice = prompt_choice([
+            f"Quick camp       {C.DIM}(1 food + 1 firewood — partial restore){C.RESET}",
+            f"Sleep overnight  {C.DIM}(2 food + 1 firewood — full hunger reset, day advances){C.RESET}",
+        ])
+        sleep_mode = (camp_choice == 2)
+    else:
+        sleep_mode = False
+
+    food = food_items[0]
     hp_gain, mana_gain, poison_risk = CAMP_FOOD[food.name]
 
+    clear()
+    title_screen("MAKE CAMP")
     print(f"\n  {C.DIM}You find a sheltered spot and build a fire.{C.RESET}")
-    print(f"  {C.DIM}Consuming: {C.RESET}{firewood.name}{C.DIM} + {C.RESET}{food.name}")
+    if sleep_mode:
+        food2 = food_items[1]
+        print(f"  {C.DIM}Consuming: {C.RESET}{firewood.name}{C.DIM} + {C.RESET}{food.name}{C.DIM} + {C.RESET}{food2.name}")
+    else:
+        print(f"  {C.DIM}Consuming: {C.RESET}{firewood.name}{C.DIM} + {C.RESET}{food.name}")
     print()
 
     player.remove_item(firewood)
     player.remove_item(food)
+    if sleep_mode:
+        player.remove_item(food2)
 
     if poison_risk and random.random() < 0.20:
         player.take_damage(15)
@@ -764,14 +833,30 @@ def make_camp(player: Player):
     else:
         player.heal(hp_gain)
         player.restore_mana(mana_gain)
-        hunger_restore = FOOD_HUNGER_RESTORE.get(food.name, 30)
-        player.hunger  = min(100, player.hunger + hunger_restore)
-        gain_str = f"+{hp_gain} HP"
-        if mana_gain:
-            gain_str += f", +{mana_gain} Mana"
-        gain_str += f", +{hunger_restore} hunger"
-        print(f"  {C.BGREEN}You rest well through the night. {gain_str}.{C.RESET}")
-        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}  |  Mana: {player.mana}/{player.max_mana}{C.RESET}")
+
+        if sleep_mode:
+            player.hunger = 100
+            player.days_elapsed += 1
+            gain_str = f"+{hp_gain} HP"
+            if mana_gain:
+                gain_str += f", +{mana_gain} Mana"
+            gain_str += ", hunger fully restored"
+            print(f"  {C.BGREEN}You sleep through the night. {gain_str}.{C.RESET}")
+            print(f"  {C.BYELLOW}The sun rises. Day {player.days_elapsed}.{C.RESET}")
+        else:
+            hunger_restore = FOOD_HUNGER_RESTORE.get(food.name, 30)
+            from engine.lore_bonuses import get_lore_bonus
+            hunger_restore += int(get_lore_bonus(player, "camp_hunger_bonus"))
+            player.hunger  = min(100, player.hunger + hunger_restore)
+            gain_str = f"+{hp_gain} HP"
+            if mana_gain:
+                gain_str += f", +{mana_gain} Mana"
+            gain_str += f", +{hunger_restore} hunger"
+            print(f"  {C.BGREEN}You rest by the fire. {gain_str}.{C.RESET}")
+
+        print(f"  {C.DIM}HP: {player.hp}/{player.max_hp}  |  Mana: {player.mana}/{player.max_mana}"
+              f"  |  Hunger: {player.hunger}/100{C.RESET}")
+
         if food.name == "Herb Bundle":
             if player.road_poison > 0 or player.road_diseased or player.sick_days > 0:
                 player.road_poison   = 0
@@ -865,6 +950,7 @@ def _do_forage(player: Player):
     if random.random() * 100 > success_chance:
         player.days_elapsed += 1
         player.road_total   += 1
+        player.hunger        = max(0, player.hunger - 13)
         print(f"  {C.BBLACK}Your time spent foraging was unsuccessful.")
         print(f"  It has since grown dark. Your journey extends a day...{C.RESET}")
         pause()
@@ -887,6 +973,7 @@ def _do_forage(player: Player):
     found_name = random.choices(names, weights=wts, k=1)[0]
     found_item = _LOOKUP.get(found_name)
 
+    player.hunger = max(0, player.hunger - 7)
     if found_item:
         if player.can_carry():
             player.add_item(found_item)
@@ -932,6 +1019,8 @@ def hunting_minigame(player):
     martial  = player.skill("Martial")
 
     kill_chance = 10 + (stealth + survival) / 5
+    from engine.lore_bonuses import get_lore_bonus
+    kill_chance = min(85, kill_chance + get_lore_bonus(player, "hunt_kill_bonus"))
     injury_risk = max(0.10, (40 - survival * 0.3) / 100)
 
     clear()
@@ -974,6 +1063,9 @@ def hunting_minigame(player):
         choice = prompt_choice(options, "Your approach")
 
         if choice == 4:
+            player.days_elapsed += 1
+            player.road_total   += 1
+            player.hunger        = max(0, player.hunger - 13)
             print(f"\n  {C.DIM}You lower your bow. The {a_name} vanishes into the trees.{C.RESET}")
             pause()
             return
@@ -1029,6 +1121,9 @@ def hunting_minigame(player):
         f"Let it go       {C.DIM}(walk away){C.RESET}",
     ]
     if prompt_choice(options, "") == 2:
+        player.days_elapsed += 1
+        player.road_total   += 1
+        player.hunger        = max(0, player.hunger - 13)
         print(f"\n  {C.DIM}You lower your bow. Some hunts are not meant to end.{C.RESET}")
         pause()
         return
@@ -1103,6 +1198,9 @@ def hunting_minigame(player):
         else:
             print(f"  {C.DIM}You escape without injury.{C.RESET}")
 
+    player.days_elapsed += 1
+    player.road_total   += 1
+    player.hunger        = max(0, player.hunger - 13)
     pause()
 
 
@@ -1357,14 +1455,16 @@ def road_loop(player):
         print()
         section("ROAD")
 
-        has_fire = any(i.name in FIREWOOD_NAMES for i in player.inventory)
-        has_food = any(i.name in CAMP_FOOD for i in player.inventory)
-        if has_fire and has_food:
-            camp_label = f"Make camp      {C.DIM}(costs 1 Firewood + 1 food item){C.RESET}"
+        fire_ct = sum(1 for i in player.inventory if i.name in FIREWOOD_NAMES)
+        food_ct = sum(1 for i in player.inventory if i.name in CAMP_FOOD)
+        if fire_ct and food_ct >= 2:
+            camp_label = f"Make camp      {C.DIM}(1 Firewood + food — or sleep overnight with 2 food){C.RESET}"
+        elif fire_ct and food_ct == 1:
+            camp_label = f"Make camp      {C.DIM}(1 Firewood + 1 food — quick rest){C.RESET}"
         else:
             missing = []
-            if not has_fire: missing.append("firewood")
-            if not has_food: missing.append("food")
+            if not fire_ct: missing.append("firewood")
+            if not food_ct: missing.append("food")
             camp_label = (f"{C.BBLACK}Make camp      "
                           f"(missing: {', '.join(missing)}){C.RESET}")
 

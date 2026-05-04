@@ -258,7 +258,9 @@ def resume_ambient_loop() -> None:
     Used after combat ends (flee or victory) to restore the pre-combat music.
     If location music was active before combat, restarts it instead of the beep loop.
     """
+    global _location_music_active
     if _location_music_active:
+        _location_music_active = False  # allow play_location_music to restart after battle stopped it
         play_location_music()
     else:
         start_ambient_loop(_current_context)
@@ -278,8 +280,11 @@ def play_location_music(filename: str = "test12.wav") -> None:
     """Start looping location music from the sounds/ folder.
     Stops the beep ambient first. Sets a flag so resume_ambient_loop()
     knows to restore location music after combat rather than the beep loop.
+    No-op if location music is already playing (prevents mid-location restarts).
     """
     global _location_music_active
+    if _location_music_active:
+        return
     stop_ambient_loop()
     _location_music_active = True
     try:
@@ -456,19 +461,24 @@ def item_line(item, show_value: bool = True) -> str:
 def prompt_choice(options: list, prompt: str = "Your choice") -> int:
     """
     Print numbered options and return the player's 1-based selection.
+    The last option is always shown as [0] and accepts 0 as input — the universal back key.
     Loops until a valid integer is entered.
     """
     print()
+    last = len(options)
     for i, opt in enumerate(options, 1):
-        print(f"  {C.BYELLOW}[{i}]{C.RESET}  {opt}")
+        label = "0" if i == last else str(i)
+        print(f"  {C.BYELLOW}[{label}]{C.RESET}  {opt}")
     print()
     while True:
         try:
             raw = input(f"  {C.BCYAN}{prompt}: {C.RESET}").strip()
             val = int(raw)
-            if 1 <= val <= len(options):
+            if val == 0:
+                return last
+            if 1 <= val <= last:
                 return val
-            print(f"  {C.RED}Please enter a number between 1 and {len(options)}.{C.RESET}")
+            print(f"  {C.RED}Please enter a number between 1 and {last - 1}, or 0 to go back.{C.RESET}")
         except (ValueError, EOFError):
             print(f"  {C.RED}Invalid input — enter a number.{C.RESET}")
 
@@ -617,7 +627,8 @@ def show_character_sheet(player):
     clear()
 
     dominant_skill, cls = get_class(player.skills)
-    title_screen(f"{player.name.upper()} \u2014 {cls['name'].upper()}")
+    display_class = player.char_class if getattr(player, "char_class", "") else cls["name"]
+    title_screen(f"{player.name.upper()} \u2014 {display_class.upper()}")
 
     print(f"  {C.BYELLOW}\"{cls['tagline']}\"{C.RESET}")
     print()

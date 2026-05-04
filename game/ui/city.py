@@ -18,8 +18,17 @@ from ui.display      import (
     C, RARITY_COLOR, BIOME_COLOR,
     clear, pause, hr, section, title_screen, prompt_choice,
     show_world_map, show_character_sheet, skill_bar, play_melody,
+    play_location_music, stop_location_music,
 )
 from ui.equipment    import bag_screen, read_grimtotem
+
+
+def _bonus_str(item) -> str:
+    """Return a compact stat-bonus string for display, e.g. '+2 Martial, -1 Stealth'."""
+    if not item.stat_bonuses:
+        return ""
+    parts = [f"{'+' if v >= 0 else ''}{v} {k}" for k, v in item.stat_bonuses.items()]
+    return f"  {C.DIM}({', '.join(parts)}){C.RESET}"
 
 
 # ── Training cost helper ──────────────────────────────────────────────────────
@@ -57,12 +66,14 @@ INN_FLAVOUR = {
 
 def merchant_screen(player: Player, city, merchant: dict):
     """Interact with a single named merchant — Sell / Buy / Negotiate / Leave."""
+    play_location_music("merchant_theme.wav")
     while True:
         if merchant.get("ejected"):
             clear()
             title_screen(f"{merchant['name'].upper()} — {merchant['type'].upper()}")
             print(f"\n  {C.BRED}[Thrown out — not welcome here]{C.RESET}")
             pause()
+            stop_location_music()
             return
 
         gp_delta = merchant.get("gp_delta", 0)
@@ -107,6 +118,7 @@ def merchant_screen(player: Player, city, merchant: dict):
             "Leave",
         ])
         if tab == 4:
+            stop_location_music()
             return
 
         if tab == 3:
@@ -125,21 +137,30 @@ def merchant_screen(player: Player, city, merchant: dict):
                 clear()
                 title_screen(f"SELL — {merchant['name'].upper()}")
                 print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}")
+                if gp_delta > 0:
+                    print(f"  {C.BGREEN}[Negotiation active: +{gp_delta}gp on every sale]{C.RESET}")
+                elif gp_delta < 0:
+                    print(f"  {C.BRED}[Negotiation penalty: {gp_delta}gp on every sale]{C.RESET}")
                 print()
 
                 options = []
                 for item in player.inventory:
-                    sp  = sell_price(item, city, gp_delta)
-                    mod = city.price_modifier(item.name)
+                    sp   = sell_price(item, city, gp_delta)
+                    base = sell_price(item, city, 0)
+                    mod  = city.price_modifier(item.name)
                     if mod > 1.0:
                         price_str = f"{C.BGREEN}{sp}gp ▲ (scarce){C.RESET}"
                     elif mod < 1.0:
                         price_str = f"{C.BRED}{sp}gp ▼ (abundant){C.RESET}"
                     else:
                         price_str = f"{C.WHITE}{sp}gp{C.RESET}"
+                    delta_tag = (
+                        f"  {C.BGREEN}[+{gp_delta}]{C.RESET}" if gp_delta > 0 else
+                        f"  {C.BRED}[{gp_delta}]{C.RESET}"    if gp_delta < 0 else ""
+                    )
                     options.append(
                         f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}  "
-                        f"{price_str}  {C.DIM}base {item.base_value}gp{C.RESET}"
+                        f"{price_str}{delta_tag}{_bonus_str(item)}  {C.DIM}base {item.base_value}gp{C.RESET}"
                     )
                 options.append(f"{C.BBLACK}← Leave selling{C.RESET}")
 
@@ -169,6 +190,10 @@ def merchant_screen(player: Player, city, merchant: dict):
                 title_screen(f"BUY — {merchant['name'].upper()}")
                 print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}  "
                       f"{C.DIM}Bag: {len(player.inventory)}/{MAX_INVENTORY}{C.RESET}")
+                if gp_delta > 0:
+                    print(f"  {C.BGREEN}[Negotiation active: -{gp_delta}gp off every purchase]{C.RESET}")
+                elif gp_delta < 0:
+                    print(f"  {C.BRED}[Negotiation penalty: +{abs(gp_delta)}gp on every purchase]{C.RESET}")
                 print()
 
                 options = []
@@ -184,10 +209,10 @@ def merchant_screen(player: Player, city, merchant: dict):
                     else:
                         price_str = f"{C.WHITE}{bp}gp{C.RESET}"
                     affordable = "" if player.gold >= bp else f"  {C.BRED}✗{C.RESET}"
-                    desc_text  = item.description[:65] + ("…" if len(item.description) > 65 else "")
+                    desc_text  = item.description[:55] + ("…" if len(item.description) > 55 else "")
                     options.append(
                         f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}"
-                        f"{tag}  {price_str}{affordable}  "
+                        f"{tag}  {price_str}{affordable}{_bonus_str(item)}  "
                         f"{C.DIM}{desc_text}{C.RESET}"
                     )
                 options.append(f"{C.BBLACK}← Leave buying{C.RESET}")
@@ -340,7 +365,7 @@ def train_skills(player: Player):
 # ── Inn ───────────────────────────────────────────────────────────────────────
 
 def rest_at_inn(player: Player):
-    cost = 10
+    cost = 8
     if player.hp == player.max_hp and player.mana == player.max_mana:
         print(f"\n  {C.DIM}You're already at full health and mana. No need to rest.{C.RESET}")
     elif player.gold < cost:
@@ -356,7 +381,7 @@ def rest_at_inn(player: Player):
         title_screen("REST AT THE INN")
         print(f"  {C.DIM}{flavour}{C.RESET}")
         print()
-        print(f"  {C.BGREEN}You wake rested. HP and Mana fully restored. (−10gp){C.RESET}")
+        print(f"  {C.BGREEN}You wake rested. HP and Mana fully restored. (−{cost}gp){C.RESET}")
     time.sleep(1.5)
 
 
@@ -439,6 +464,342 @@ def read_book_menu(player: Player):
         pause()
 
 
+# ── Jobs — commission sales ────────────────────────────────────────────────────
+
+_JOB_CUSTOMERS = [
+    ("Curious Townsperson",   "Looking around, no particular hurry.",       0),
+    ("Cautious Homesteader",  "Careful with coin. Needs convincing.",       1),
+    ("Eager Young Merchant",  "Wants to impress. Easy to read.",            0),
+    ("Seasoned Tradesman",    "Seen it all. Hard sell.",                    2),
+    ("Retired Soldier",       "Practical. Values reliability over charm.",  1),
+    ("Merchant's Spouse",     "Shopping for the household.",                0),
+    ("Minor Official",        "Self-important. Responds to status.",        2),
+    ("Dockworker",            "No-nonsense. Wants a straight deal.",        1),
+]
+
+_HUNGER_PER_ATTEMPT = 25   # hunger cost per sales attempt (4 attempts = full day)
+_MAX_ATTEMPTS       = 4
+
+
+def jobs_screen(player: Player, city):
+    """Commission sales job — pitch items to customers on behalf of a chosen merchant."""
+    from engine.negotiate import MOTIVATIONS, APPEALS, _speechcraft_tier, _SPEECH_FEEDBACK
+
+    global _city_merchants
+    city_key  = city.key
+
+    if city_key not in _city_merchants:
+        _city_merchants[city_key] = generate_city_merchants(city_key)
+
+    merchants = [m for m in _city_merchants[city_key]
+                 if m.get("available") and m.get("stock")]
+
+    if not merchants:
+        clear()
+        title_screen("JOBS")
+        print(f"\n  {C.BBLACK}No merchants are looking for sales help today.{C.RESET}")
+        pause()
+        return
+
+    # ── Choose a merchant to work for ─────────────────────────────────────────
+    clear()
+    title_screen("JOBS — MERCHANT'S ASSISTANT")
+    print(f"  {C.DIM}Work as a sales agent. Earn 5% commission per closed deal.{C.RESET}")
+    print(f"  {C.DIM}You have {_MAX_ATTEMPTS} pitches before hunger forces you to stop.{C.RESET}")
+    print()
+
+    m_options = [
+        f"{C.BCYAN}{m['name']}{C.RESET}  {C.DIM}({m['type']}){C.RESET}"
+        for m in merchants
+    ]
+    choice = prompt_choice(m_options, "Work for whom?")
+    if choice == len(m_options):
+        return
+
+    merchant  = merchants[choice - 1]
+    stock     = merchant["stock"]
+
+    if not stock:
+        print(f"\n  {C.BBLACK}{merchant['name']} has nothing in stock to sell.{C.RESET}")
+        pause()
+        return
+
+    total_commission = 0
+    deals_closed     = 0
+
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        if player.hunger < _HUNGER_PER_ATTEMPT:
+            clear()
+            title_screen("JOBS")
+            print(f"\n  {C.BRED}You're too hungry to keep working. Eat something first.{C.RESET}")
+            pause()
+            break
+
+        item     = random.choice(stock)
+        customer = random.choice(_JOB_CUSTOMERS)
+        cust_name, cust_desc, difficulty = customer
+        motivation_idx = random.randint(0, len(MOTIVATIONS) - 1)
+
+        close_pct  = 35.0 + difficulty * -8
+        insult_pct = 45.0 + difficulty * 10
+
+        clear()
+        title_screen(f"JOBS — PITCH {attempt}/{_MAX_ATTEMPTS}")
+        print(f"  {C.DIM}Working for: {C.RESET}{C.BCYAN}{merchant['name']}{C.RESET}"
+              f"  {C.DIM}({merchant['type']}){C.RESET}")
+        print(f"  {C.BYELLOW}Gold: {player.gold}gp{C.RESET}  "
+              f"{C.DIM}Hunger: {player.hunger}/100{C.RESET}")
+        print()
+        hr()
+        print(f"  {C.BCYAN}Customer:{C.RESET}  {cust_name}")
+        print(f"  {C.DIM}{cust_desc}{C.RESET}")
+        print()
+        sp   = sell_price(item, city, 0)
+        commission = max(1, round(item.base_value * 0.05))
+        print(f"  {C.BCYAN}Pitch item:{C.RESET}  "
+              f"{RARITY_COLOR.get(item.rarity, C.WHITE)}{item.name}{C.RESET}"
+              f"  {C.BYELLOW}{sp}gp{C.RESET}  "
+              f"{C.DIM}(commission: {commission}gp if closed){C.RESET}")
+        print()
+
+        # 2-round pitch
+        pitch_log = []
+        for rnd in range(1, 3):
+            print(f"  {C.DIM}Close chance: {close_pct:.0f}%   Insult: {insult_pct:.0f}%{C.RESET}")
+            if pitch_log:
+                for line in pitch_log:
+                    print(f"  {line}")
+            print()
+
+            appeal_opts = [
+                f"{C.BOLD}{label:<32}{C.RESET}  {C.DIM}{flavor}{C.RESET}"
+                for _, label, flavor in APPEALS
+            ]
+            appeal_opts.append(f"{C.BYELLOW}Go for the close{C.RESET}  "
+                               f"{C.DIM}({close_pct:.0f}% chance){C.RESET}")
+
+            pick    = prompt_choice(appeal_opts, "Your pitch")
+            if pick == len(appeal_opts):
+                break
+
+            mkey, _, _ = APPEALS[pick - 1]
+            correct    = (mkey == MOTIVATIONS[motivation_idx])
+
+            if correct:
+                close_pct  = min(90.0, close_pct + 22.0)
+                insult_pct = max(10.0, insult_pct - 15.0)
+            else:
+                insult_pct = min(90.0, insult_pct + 12.0)
+
+            tier     = _speechcraft_tier(player)
+            feedback = _SPEECH_FEEDBACK[tier][correct]
+            tag      = f"{C.BGREEN}✓{C.RESET}" if correct else f"{C.BRED}✗{C.RESET}"
+            pitch_log.append(f"{tag} {C.DIM}{feedback}{C.RESET}")
+
+            clear()
+            title_screen(f"JOBS — PITCH {attempt}/{_MAX_ATTEMPTS}  Round {rnd}/2")
+            print(f"  {C.BCYAN}Customer:{C.RESET}  {cust_name}  {C.DIM}— {cust_desc}{C.RESET}")
+            print(f"  {C.BCYAN}Item:{C.RESET}  {item.name}  {C.BYELLOW}{sp}gp{C.RESET}")
+            print()
+
+        # Resolve — lore bonus: Sellsword's Almanac boosts close rate
+        from engine.lore_bonuses import get_lore_bonus
+        effective_close = min(95.0, close_pct + get_lore_bonus(player, "jobs_close_pct"))
+        agreement   = random.randint(1, 100) <= effective_close
+        high_insult = random.randint(1, 100) <= insult_pct
+
+        print()
+        if agreement and not high_insult:
+            player.hunger = max(0, player.hunger - _HUNGER_PER_ATTEMPT)
+            player.gold  += commission
+            total_commission += commission
+            deals_closed     += 1
+            print(f"  {C.BGREEN}Deal closed. +{commission}gp commission.{C.RESET}")
+            print(f"  {C.DIM}Gold: {player.gold}gp  |  Hunger: {player.hunger}/100{C.RESET}")
+        elif high_insult:
+            player.hunger = max(0, player.hunger - _HUNGER_PER_ATTEMPT)
+            print(f"  {C.BRED}They took offence and walked. No deal.{C.RESET}")
+            print(f"  {C.DIM}Hunger: {player.hunger}/100{C.RESET}")
+        else:
+            player.hunger = max(0, player.hunger - _HUNGER_PER_ATTEMPT)
+            print(f"  {C.BYELLOW}They weren't convinced. No deal.{C.RESET}")
+            print(f"  {C.DIM}Hunger: {player.hunger}/100{C.RESET}")
+
+        pause()
+
+        if attempt < _MAX_ATTEMPTS:
+            cont = prompt_choice([
+                "Next customer",
+                f"{C.BBLACK}Call it a day{C.RESET}",
+            ])
+            if cont == 2:
+                break
+
+    # Summary
+    clear()
+    title_screen("END OF SHIFT")
+    print(f"  {C.DIM}You finish up with {merchant['name']}.{C.RESET}")
+    print()
+    print(f"  Deals closed:   {C.BYELLOW}{deals_closed}/{_MAX_ATTEMPTS}{C.RESET}")
+    print(f"  Commission:     {C.BGREEN}+{total_commission}gp{C.RESET}")
+    print(f"  Hunger remaining: {player.hunger}/100")
+    if player.hunger < 30:
+        print(f"\n  {C.BRED}You're running low on energy. Find food soon.{C.RESET}")
+    pause()
+
+
+# ── Library ──────────────────────────────────────────────────────────────────
+
+_LIBRARY_ENTRIES = [
+    (
+        "How to Play",
+        """\
+  The Merchant's Road is a text-based RPG built on choices, skill checks, and trade.
+  Your goal: earn gold, survive the road, and grow strong enough to take on harder
+  challenges. Each city visit lets you trade, train, and prepare. Each road segment
+  is a gauntlet of random events. Reach the next city — that is the game loop.\
+""",
+    ),
+    (
+        "Skills",
+        """\
+  MARTIAL       — Governs melee combat damage and accuracy.
+  STEALTH       — Pickpocketing, evading enemies, prowling at night.
+  DUNGEONEERING — Traps, puzzles, maze navigation, exploration rewards.
+  SURVIVAL      — Bushcraft, hunting, foraging, resisting road hazards.
+  MAGIC         — Spell power and mana pool. Unarmoured characters gain +3 passive.
+  SPEECHCRAFT   — Negotiation, persuasion, diplomacy checks.
+  MERCHANTILISM — Buy/sell prices, trade margins, negotiation close bonus.\
+""",
+    ),
+    (
+        "Combat",
+        """\
+  Combat is resolved in rounds. Each round you choose: Attack, use a Spell,
+  use an Item, or Flee. Weapons have damage types (Slash, Pierce, Bash) that
+  interact with enemy armour. Higher Martial = more damage dealt and better
+  hit chance. Enemies have HP and armour types (none, cloth, leather, mail).
+  Spells cost Mana and scale with your Magic skill. Fleeing uses Stealth +
+  Survival to determine escape success.\
+""",
+    ),
+    (
+        "The Road",
+        """\
+  Each step on the road costs Hunger. Reach 0 Hunger and you take HP damage
+  per step. Keep food and firewood in your pack. Random events occur each step
+  — encounters, discoveries, hazards. Biome affects what you find: forests give
+  herbs and game; mountains give ore; deserts are harsh but reward high Survival.
+  Road poison: -5 HP per step for 2 steps. Disease: -5 HP per step until town.
+  Both can be cured by camping with a Herb Bundle.\
+""",
+    ),
+    (
+        "Dungeons & Locations",
+        """\
+  Locations (caves, castles) are branching room graphs. Start at the entry and
+  navigate toward the boss. Side rooms include: Traps (Dungeoneering + Survival
+  check), Puzzles (riddles, sequences, mazes — Dungeoneering), Secrets (hidden
+  loot), Dead Ends (atmosphere + occasional items). Bosses guard rare loot.
+  Press [0] to retreat from any room. Trap rooms always have a Back exit —
+  you are never forced out unless the dungeon collapses.\
+""",
+    ),
+    (
+        "Negotiation",
+        """\
+  Visit a merchant and choose Negotiate. You have up to 3 rounds to appeal to
+  their motivation (Status, Acceptance, Control, Certainty). Match their hidden
+  motivation to build your Close chance. Go for the Close when ready — or wait
+  and be forced into it at round 4. A successful deal gives a per-transaction
+  gp bonus (shown on buy/sell screens). A botched deal gives a penalty.
+  High insult + no agreement = ejected. Merchantilism and Speechcraft both help.\
+""",
+    ),
+    (
+        "Camping & Hunger",
+        """\
+  Hunger depletes each road step. Eat food directly from your Bag to partially
+  restore it. To camp: you need Firewood + at least 1 food item.
+  Quick camp (1 food + 1 firewood): partial HP/mana and hunger restore.
+  Sleep overnight (2 food + 1 firewood): full hunger reset to 100, HP restored,
+  one day passes. Herb Bundle at camp cures poison and disease.
+  Bushcraft (Survival skill) lets you forage food and firewood on the road.\
+""",
+    ),
+    (
+        "Stealth & Prowl",
+        """\
+  Prowl is available in cities with 10+ Stealth. On the streets you can attempt
+  to Pickpocket citizens — governed by Stealth. Success yields items or gold.
+  Failure raises City Heat. At 100 Heat you become Wanted — guards attack on entry.
+  Heat decays slowly over road travel. When entering dungeons with enemies, a
+  Stealth check lets you attempt a surprise attack or sneak past them entirely.\
+""",
+    ),
+    (
+        "Equipment & Armour",
+        """\
+  Armour types: Cloth (+Magic, light), Leather (+Stealth, +Survival),
+  Mail (+Martial, +Survival, -Stealth). Stat bonuses are always visible in
+  the buy/sell screens and on your Character Sheet. Rings and Necklaces grant
+  passive skill bonuses when equipped. Cursed items cannot be unequipped and
+  some reduce your max HP — the penalty is shown on your Character Sheet.
+  Weapons have damage types that counter specific armour (Bash vs mail, etc.).\
+""",
+    ),
+    (
+        "Training",
+        """\
+  Visit the Training Hall to spend gold raising a skill directly.
+  Cost scales with your current level: cheap at low levels, expensive at high.
+  Tiers: 1–24 (20gp), 25–49 (55gp), 50–74 (130gp), 75+ (300gp).
+  Skills gained through combat, negotiation, and exploration can push beyond
+  the training cap. Items and equipment add on top of your base skill scores.\
+""",
+    ),
+]
+
+
+def library_screen(player: Player):
+    """The Library — game reference manual and inventory book/grimtotem reader."""
+    from ui.display import typewrite
+
+    while True:
+        clear()
+        title_screen("THE LIBRARY")
+        print(f"  {C.DIM}A reference for travellers. Knowledge freely given.{C.RESET}")
+        print()
+
+        readable_items = [i for i in player.inventory
+                          if i.item_type in ("book", "grimtotem")]
+        read_hint = (
+            f"  {C.BYELLOW}({len(readable_items)} item{'s' if len(readable_items) != 1 else ''}){C.RESET}"
+            if readable_items else f"  {C.DIM}(none in inventory){C.RESET}"
+        )
+
+        options = [f"{C.BCYAN}{title}{C.RESET}" for title, _ in _LIBRARY_ENTRIES]
+        options.append(f"Read from inventory{read_hint}")
+        options.append(f"{C.BBLACK}← Back{C.RESET}")
+
+        choice = prompt_choice(options, "Open which section?")
+
+        if choice == len(options):
+            return
+        if choice == len(options) - 1:
+            read_book_menu(player)
+            continue
+
+        title, body = _LIBRARY_ENTRIES[choice - 1]
+        clear()
+        title_screen(f"LIBRARY — {title.upper()}")
+        print()
+        for line in body.split("\n"):
+            print(line)
+        print()
+        pause("Press Enter to return to the Library...")
+
+
 # ── City loop ─────────────────────────────────────────────────────────────────
 
 def city_loop(player: Player):
@@ -497,10 +858,11 @@ def city_loop(player: Player):
             f"The Market        {C.DIM}(3 merchants — buy, sell, negotiate){C.RESET}",
             f"Bag               {C.DIM}(gear + journal){C.RESET}",
             f"Training Hall     {C.DIM}(improve skills for gold){C.RESET}",
-            f"Rest at the Inn   {C.DIM}(restore HP & mana — 10gp){C.RESET}",
+            f"Rest at the Inn   {C.DIM}(restore HP & mana — 8gp){C.RESET}",
             prowl_label,
+            f"Jobs              {C.DIM}(pitch wares for a merchant — earn commission){C.RESET}",
             f"Character Sheet   {C.DIM}(stats, equipment, inventory){C.RESET}",
-            f"Read              {C.DIM}(books + grimtotems){C.RESET}{book_hint}",
+            f"Library           {C.DIM}(game reference + books){C.RESET}{book_hint}",
             f"Travel            {C.DIM}(set out on the road){C.RESET}",
             f"{C.BBLACK}Quit{C.RESET}",
         ]
@@ -527,10 +889,12 @@ def city_loop(player: Player):
                 print(f"\n  {C.BBLACK}You don't move quietly enough to work a crowd.{C.RESET}")
                 pause()
         elif choice == 6:
-            show_character_sheet(player)
+            jobs_screen(player, city)
         elif choice == 7:
-            read_book_menu(player)
+            show_character_sheet(player)
         elif choice == 8:
+            library_screen(player)
+        elif choice == 9:
             if not adjacent:
                 print(f"\n  {C.BBLACK}No roads lead out of {city.name}.{C.RESET}")
                 pause()

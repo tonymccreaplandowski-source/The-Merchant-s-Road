@@ -243,6 +243,8 @@ def _pickpocket_attempt(player: Player, city_key: str, mark_name: str, mark_desc
 
     lift_chance   = max(15.0, 35.0 - awareness * 0.15)
     suspicion_pct = min(80.0, 30.0 + awareness * 0.40)
+    from engine.lore_bonuses import get_lore_bonus
+    lift_chance   = min(85.0, lift_chance + get_lore_bonus(player, "pickpocket_lift_bonus"))
 
     log = []
 
@@ -498,15 +500,18 @@ def prowl_screen(player: Player) -> None:
         print(f"  {C.BRED}[Connected] — this mark has reach. Getting caught will escalate.{C.RESET}")
     print()
 
-    martial = player.skill("Martial")
+    martial   = player.skill("Martial")
+    n_picks   = sum(1 for i in player.inventory if i.name == "Lock Picks")
+    burg_hint = f"  {C.DIM}({n_picks} pick{'s' if n_picks != 1 else ''}){C.RESET}" if n_picks else f"  {C.BBLACK}(no picks){C.RESET}"
     options = [
         f"Pickpocket  {C.DIM}[Stealth] — quiet, careful, lower heat{C.RESET}",
         f"Mug them    {C.DIM}[Martial: {martial}] — direct, high heat, significant risk{C.RESET}",
+        f"Burglary    {C.DIM}[Stealth + Dungeoneering] — case a building{C.RESET}{burg_hint}",
         f"Walk away   {C.DIM}(leave the streets){C.RESET}",
     ]
     choice = prompt_choice(options, "Your approach")
 
-    if choice == 3:
+    if choice == 4:
         print(f"\n  {C.DIM}You think better of it. The crowd swallows you whole.{C.RESET}")
         pause()
         return
@@ -517,3 +522,6 @@ def prowl_screen(player: Player) -> None:
     elif choice == 2:
         _mug_attempt(player, city_key, mark_name, mark_desc,
                      gold_min, gold_max, awareness, is_connected)
+    elif choice == 3:
+        from engine.burglary import burglary_screen
+        burglary_screen(player)

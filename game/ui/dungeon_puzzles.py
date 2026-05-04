@@ -195,7 +195,7 @@ def run_riddle(player: Player, gating: bool = False) -> bool:
     accepted = [a.lower() for a in riddle["answers"]]
     if answer in accepted:
         print(f"\n  {C.BGREEN}The stone shifts. The answer echoes and fades.{C.RESET}")
-        time.sleep(1.0)
+        pause()
         return True
     else:
         correct = riddle["answers"][0]
@@ -203,7 +203,7 @@ def run_riddle(player: Player, gating: bool = False) -> bool:
             print(f"\n  {C.BRED}Wrong. The mechanism locks. The answer was: {correct}.{C.RESET}")
         else:
             print(f"\n  {C.BYELLOW}Nothing happens. The answer was: {correct}.{C.RESET}")
-        time.sleep(1.2)
+        pause()
         return False
 
 
@@ -380,11 +380,11 @@ def run_reveal(player: Player, gating: bool = False) -> bool:
     guess = prompt_choice(options)
     if guess - 1 == correct:
         print(f"\n  {C.BGREEN}Yes. You knew what you were looking at.{C.RESET}")
-        time.sleep(1.0)
+        pause()
         return True
     else:
         print(f"\n  {C.BYELLOW}Wrong. It was {obj['name']}.{C.RESET}")
-        time.sleep(1.2)
+        pause()
         return False
 
 
@@ -734,7 +734,7 @@ def run_sequence(player: Player, gating: bool = False) -> bool:
 
     if chosen == correct:
         print(f"  {C.BGREEN}The mechanism clicks. Something shifts beyond the door.{C.RESET}")
-        time.sleep(1.0)
+        pause()
         return True
     else:
         correct_str = " → ".join(correct)
@@ -742,7 +742,7 @@ def run_sequence(player: Player, gating: bool = False) -> bool:
             print(f"  {C.BRED}Wrong order. The mechanism locks. Correct: {correct_str}{C.RESET}")
         else:
             print(f"  {C.BYELLOW}Nothing. Wrong order. Correct: {correct_str}{C.RESET}")
-        time.sleep(1.2)
+        pause()
         return False
 
 # ═══════════════════════════════════════════════════════════════════════════════

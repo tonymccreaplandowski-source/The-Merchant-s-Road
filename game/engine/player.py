@@ -81,6 +81,9 @@ class Player:
     city_heat:   Dict[str, int]     = field(default_factory=dict)   # heat per city key, 0–100
     city_wanted: set                = field(default_factory=set)     # set of city keys where player is wanted
 
+    # Chosen class name from character creation (e.g. "Knight", "Mage")
+    char_class: str                 = ""
+
     # Journal — stores lore texts and grimtotem entries
     journal: List[str]              = field(default_factory=list)
 
@@ -215,9 +218,15 @@ class Player:
         prev = self.equipped.get(slot)
         self.equipped[slot] = item
 
-        # Apply curse
+        # Apply curse — warding lore can halve the max_hp penalty
         if item.cursed and item.curse_effect == "reduce_max_hp":
-            self.max_hp = max(20, self.max_hp - 20)
+            try:
+                from engine.lore_bonuses import get_lore_bonus
+                reduction_pct = get_lore_bonus(self, "curse_penalty_reduction")
+                penalty = max(5, int(20 * (1 - reduction_pct / 100)))
+            except Exception:
+                penalty = 20
+            self.max_hp = max(20, self.max_hp - penalty)
             self.hp     = min(self.hp, self.max_hp)
 
         return prev
@@ -227,9 +236,15 @@ class Player:
         item = self.equipped.get(slot)
         if item:
             self.equipped[slot] = None
-            # Reverse curse
+            # Reverse curse — match the same penalty calculation used at equip time
             if item.cursed and item.curse_effect == "reduce_max_hp":
-                self.max_hp = min(100, self.max_hp + 20)
+                try:
+                    from engine.lore_bonuses import get_lore_bonus
+                    reduction_pct = get_lore_bonus(self, "curse_penalty_reduction")
+                    penalty = max(5, int(20 * (1 - reduction_pct / 100)))
+                except Exception:
+                    penalty = 20
+                self.max_hp = min(100, self.max_hp + penalty)
         return item
 
     # ── Skill training ────────────────────────────────────────────────────

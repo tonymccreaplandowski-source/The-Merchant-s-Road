@@ -249,7 +249,7 @@ SUPPLY_ITEMS = [
     Item("Grappling Hook",     35, "uncommon", "material",   "Thrown iron hook with rope. Dungeoneers swear by it.",
          [], effect=None,
          lore="One of the tines was replaced. The original broke inside the Dripping Grotto. The man it belonged to did not."),
-    Item("Lock Picks",         55, "uncommon", "material",   "A set of slender picks. Illegal in Greyspire.",
+    Item("Lock Picks",         20, "common",   "material",   "A set of slender picks. Illegal in Greyspire.",
          [], effect=None,
          lore="Illegal in Greyspire. Made by a locksmith who understood that the best advertisement is a lock that opens."),
     Item("Lantern",            40, "uncommon", "consumable", "A hooded lantern. Reveals the unseen.",

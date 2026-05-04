@@ -200,6 +200,7 @@ def generate_dungeon(event) -> Dict[int, DungeonRoom]:
         label = _sample_label(nav_pool, used_labels)
         used_labels.append(label)
         rooms[parent_id].exits.append((label, sid))
-        # Dead ends and secrets have no onward exits — player backtracks
+        # All side branches have a back exit so player is never forced out of the dungeon
+        rooms[sid].exits.append(("Back", parent_id))
 
     return rooms

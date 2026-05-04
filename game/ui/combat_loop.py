@@ -96,6 +96,12 @@ def run_combat(player: Player, enemy, force_first: bool = False) -> bool:
                 player=player,
                 state=state,
             )
+            # Lore bonus: contextual damage boost vs specific enemy types
+            if dmg > 0:
+                from engine.lore_bonuses import get_lore_bonus
+                dmg_pct = get_lore_bonus(player, "combat_damage_pct", context=enemy.name)
+                if dmg_pct:
+                    dmg = max(1, int(dmg * (1 + dmg_pct / 100)))
             special_msg = apply_move_special(move_name, state, player, enemy)
             enemy.take_damage(dmg)
 

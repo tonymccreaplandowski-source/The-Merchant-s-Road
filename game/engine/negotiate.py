@@ -55,6 +55,14 @@ def _speechcraft_tier(player: Player) -> str:
     return "ambiguous"
 
 
+def _city_biome(player: Player) -> str:
+    try:
+        from data.cities import CITIES
+        return CITIES[player.current_city].biome if player.current_city else ""
+    except (KeyError, AttributeError):
+        return ""
+
+
 def _apply_correct(player: Player, merchant: dict, session: dict) -> None:
     p_dom = _p_dominant(player)
     if p_dom == "Merchantilism":
@@ -69,6 +77,10 @@ def _apply_correct(player: Player, merchant: dict, session: dict) -> None:
     else:
         close_bonus   = 0.0
         insult_reduce = 0.0
+
+    # Lore bonus: Merchant's Code reduces insult chance in desert
+    from engine.lore_bonuses import get_lore_bonus
+    insult_reduce += get_lore_bonus(player, "negotiate_insult_reduction", context=_city_biome(player))
 
     session["close_pct"]  = min(85.0, session["close_pct"] + 8.0 + close_bonus)
     insult_delta          = max(3.0, 12.0 - insult_reduce)
@@ -86,6 +98,10 @@ def _apply_wrong(player: Player, merchant: dict, session: dict) -> None:
         insult_reduce = player.skill(p_dom) * 0.04
     else:
         insult_reduce = 0.0
+
+    # Lore bonus: Merchant's Code reduces insult gain on wrong appeal in desert too
+    from engine.lore_bonuses import get_lore_bonus
+    insult_reduce += get_lore_bonus(player, "negotiate_insult_reduction", context=_city_biome(player))
 
     insult_gain           = max(3.0, 12.0 - insult_reduce)
     session["insult_pct"] = session["insult_pct"] + insult_gain

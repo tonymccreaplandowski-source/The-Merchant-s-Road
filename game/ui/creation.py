@@ -145,6 +145,7 @@ def character_creation() -> Player:
                 print(f"  {C.RED}Please enter a whole number.{C.RESET}")
 
     player = create_player(name, allocations)
+    player.char_class = chosen_class["name"]
 
     common_weapons = [i for i in WEAPON_ITEMS if i.rarity == "common"]
     common_trade   = [i for i in TRADE_ITEMS   if i.rarity == "common"]

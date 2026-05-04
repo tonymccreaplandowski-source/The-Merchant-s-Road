@@ -12,6 +12,7 @@ New optional fields (all default to None/0/False for backward compat):
   lore         — flavour fragment shown in inventory: one cryptic line implying history
   cursed       — if True, applying debuff on equip
   curse_effect — "drain_hp" | "reduce_max_hp"
+  lore_bonus   — {skill_name: int} applied permanently to player.skills on first read (books only)
 """
 
 from dataclasses import dataclass, field
@@ -49,6 +50,7 @@ class Item:
     cursed: bool                             = False
     curse_effect: Optional[str]             = None
     spell_name: Optional[str]               = None   # grimtotems only
+    lore_bonus: Optional[Dict[str, int]]    = None   # skill bonuses applied once on read
 
 
 # ── TRADE GOODS (raw materials, gems) ────────────────────────────────────────
@@ -250,7 +252,7 @@ SUPPLY_ITEMS = [
     Item("Grappling Hook",     35, "uncommon", "material",   "Thrown iron hook with rope. Dungeoneers swear by it.",
          [], effect=None,
          lore="One of the tines was replaced. The original broke inside the Dripping Grotto. The man it belonged to did not."),
-    Item("Lock Picks",         55, "uncommon", "material",   "A set of slender picks. Illegal in Greyspire.",
+    Item("Lock Picks",         20, "common",   "material",   "A set of slender picks. Illegal in Greyspire.",
          [], effect=None,
          lore="Illegal in Greyspire. Made by a locksmith who understood that the best advertisement is a lock that opens."),
     Item("Lantern",            40, "uncommon", "consumable", "A hooded lantern. Reveals the unseen.",
@@ -345,26 +347,63 @@ FORAGE_ITEMS = [
 
 # ── LORE BOOKS (readable, sell for small amounts) ─────────────────────────────
 BOOK_ITEMS = [
+    # ── Existing lore books ───────────────────────────────────────────────────
     Item("The Merchant's Code",      15, "common",   "book",
          "A slim volume of trading laws.",
          [],
-         lore="Trade in Al-Rimal is governed by unwritten rules older than any treaty. Break them once and the caravan masters will remember."),
+         lore="Trade in Al-Rimal is governed by unwritten rules older than any treaty. Break them once and the caravan masters will remember.",
+         lore_bonus={"type": "negotiate_insult_reduction", "requires_context": "desert",
+                     "value": 11, "fallback": 0}),
     Item("Waldheim: A History",      12, "common",   "book",
          "Damp pages, faded ink.",
          [],
-         lore="Waldheim was not always a settlement. Before the hunters came, it was a burial ground for a people whose name has not survived."),
+         lore="Waldheim was not always a settlement. Before the hunters came, it was a burial ground for a people whose name has not survived.",
+         lore_bonus={"type": "combat_damage_pct", "requires_context": "skeleton",
+                     "value": 10, "fallback": 0}),
     Item("Geology of Greyspire",      18, "common",   "book",
          "Densely technical, with margin notes.",
          [],
-         lore="The ore veins beneath Greyspire run deeper than any mine has reached. The locals believe something lives in the unmined dark."),
+         lore="The ore veins beneath Greyspire run deeper than any mine has reached. The locals believe something lives in the unmined dark.",
+         lore_bonus={"type": "loot_ore_bonus", "requires_context": "greyspire",
+                     "value": 10, "fallback": 2}),
     Item("On the Nature of Goblins", 10, "common",   "book",
          "Illustrated with unsettling accuracy.",
          [],
-         lore="Goblins do not form armies by choice. Something is always driving them. When you kill one, ask yourself what it was running from."),
+         lore="Goblins do not form armies by choice. Something is always driving them. When you kill one, ask yourself what it was running from.",
+         lore_bonus={"type": "combat_damage_pct", "requires_context": "goblin",
+                     "value": 5, "fallback": 0}),
     Item("The Sellsword's Almanac",  20, "uncommon", "book",
          "A battered field manual.",
          [],
-         lore="Every city worth defending has already been lost once. The Almanac is a record of what that costs — in coin, in blood, and in the kind of reputation that doesn't recover."),
+         lore="Every city worth defending has already been lost once. The Almanac is a record of what that costs — in coin, in blood, and in the kind of reputation that doesn't recover.",
+         lore_bonus={"type": "jobs_close_pct", "value": 10}),
+
+    # ── New lore books ────────────────────────────────────────────────────────
+    Item("A Cutpurse's Primer",      22, "uncommon", "book",
+         "Dog-eared. Several pages have been torn out.",
+         [],
+         lore="The author uses a pseudonym. Based on the specificity of the advice in chapter three, this was not their first arrest.",
+         lore_bonus={"type": "pickpocket_lift_bonus", "value": 8}),
+    Item("The Locksmith's Manual",   28, "uncommon", "book",
+         "Technical study of pin tumbler mechanisms.",
+         [],
+         lore="Authored by a master locksmith who retired from legitimate work. The final chapter is titled 'On the Ethics of Knowing.' He does not reach a conclusion.",
+         lore_bonus={"type": "lockpick_skill_bonus", "value": 11}),
+    Item("Field Notes on Game",      14, "common",   "book",
+         "Season-by-season hunting records and movement patterns.",
+         [],
+         lore="The author tracked the same stag for six winters. In the final entry, they wrote only: 'Not today.' It is unclear who decided.",
+         lore_bonus={"type": "hunt_kill_bonus", "value": 8}),
+    Item("The Woodsman's Record",    16, "common",   "book",
+         "Practical notes on fire-craft, camp-building, and winter foraging.",
+         [],
+         lore="The author survived seventeen seasons. The eighteenth is not recorded.",
+         lore_bonus={"type": "camp_hunger_bonus", "value": 11}),
+    Item("On the Binding of Harm",   45, "rare",     "book",
+         "A warding scholar's taxonomy of curse-types and their attenuation.",
+         [],
+         lore="Dense. Written in a hand that changed noticeably between sections. The later chapters were added by someone else — or the same person, much later.",
+         lore_bonus={"type": "curse_penalty_reduction", "value": 50}),
 ]
 
 # ── BOSS LOOT (named unique drops — one per location boss, never in random pool) ─
